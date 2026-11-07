@@ -5,6 +5,7 @@ import { syncDebugFlag } from './debug';
 import { Boot } from './components/Header';
 import { UpdateBanner } from './components/UpdateBanner';
 import { Home } from './screens/Home';
+import { Shell } from './Shell';
 import { Login } from './screens/Login';
 import { NewTask } from './screens/NewTask';
 import { TaskScreen } from './screens/Task';
@@ -63,29 +64,16 @@ export function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
-            path="/"
             element={
               <Gate>
-                <Home />
+                <Shell />
               </Gate>
             }
-          />
-          <Route
-            path="/tasks/new"
-            element={
-              <Gate>
-                <NewTask />
-              </Gate>
-            }
-          />
-          <Route
-            path="/tasks/:id"
-            element={
-              <Gate>
-                <TaskScreen />
-              </Gate>
-            }
-          />
+          >
+            <Route path="/" element={<Home />} />
+            <Route path="/tasks/new" element={<NewTask />} />
+            <Route path="/tasks/:id" element={<TaskScreen />} />
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

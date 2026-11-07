@@ -484,6 +484,128 @@ textarea { resize: none; min-height: 120px; max-height: 40vh; line-height: 1.45;
 }
 .bar .form-error { margin-bottom: 8px; }
 
+.shell,
+.pane,
+.phone-home { display: contents; }
+.sidebar,
+.desk-home { display: none; }
+
+.pick {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  color: var(--muted);
+}
+
+@media (min-width: 900px) {
+  #root { width: 100%; }
+  .login {
+    width: min(100%, 480px);
+    margin-inline: auto;
+  }
+  .shell {
+    display: flex;
+    align-items: stretch;
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+  .sidebar {
+    display: block;
+    width: 320px;
+    flex: none;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: 100dvh;
+    overflow: auto;
+    border-right: 1px solid var(--line);
+    background: var(--ink);
+  }
+  .pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  .pane > .screen,
+  .pane > .desk-home {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+  }
+  .phone-home { display: none; }
+  .desk-home {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pane .bar { position: static; }
+  .pane .scroll {
+    flex: 1;
+    min-height: 0;
+  }
+  .pane .scroll.stack,
+  .pane .task-meta,
+  .pane .agent-status,
+  .pane .debug,
+  .pane .prior > summary,
+  .pane .bubble.user,
+  .pane .thinking,
+  .pane .result {
+    width: min(100%, 760px);
+    max-width: 760px;
+    margin-left: auto;
+    margin-right: auto;
+    align-self: center;
+  }
+  .pane .bubble.assistant {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  .pane .bubble.assistant .md > :not(pre) {
+    width: min(100%, 760px);
+    max-width: 760px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .pane .diff,
+  .pane .md-pre,
+  .pane .tool-detail,
+  .pane .tool-command {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .pane .tool-command {
+    white-space: pre;
+    overflow-wrap: normal;
+  }
+  .task-link.active {
+    border-color: var(--seal);
+    background: color-mix(in srgb, var(--seal) 14%, var(--paper));
+  }
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 14px 28px;
+  }
+  .rail-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .rail-head strong {
+    flex: 1;
+    font-family: var(--font-display);
+    font-size: 1.45rem;
+  }
+  .rail-new { width: 100%; }
+  .sidebar .row { flex-direction: column; }
+  .sidebar .primary.slim { align-self: flex-start; }
+}
+
 .sheet-backdrop {
   position: fixed;
   inset: 0;
