@@ -1,0 +1,112 @@
+import { parseRunnerLine, type RunnerLine } from './ndjson';
+import { scrubSecrets } from './scrub';
+
+export class RunnerBusyError extends Error {
+  constructor() {
+    super('busy');
+    this.name = 'RunnerBusyError';
+  }
+}
+
+export class RunnerRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RunnerRequestError';
+  }
+}
+
+export type RunnerClient = {
+  url: string;
+  token: string;
+};
+
+async function* iterateRunner(body: ReadableStream<Uint8Array>): AsyncGenerator<RunnerLine> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  const take = function* (block: string): Generator<RunnerLine> {
+    let rest = block;
+    let idx = rest.indexOf('\n');
+    while (idx >= 0) {
+      const parsed = parseRunnerLine(rest.slice(0, idx));
+      if (parsed) yield parsed;
+      rest = rest.slice(idx + 1);
+      idx = rest.indexOf('\n');
+    }
+    buf = rest;
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    yield* take(buf);
+  }
+  buf += decoder.decode();
+  const tail = parseRunnerLine(buf);
+  if (tail) yield tail;
+}
+
+export async function openRun(
+  client: RunnerClient,
+  body: {
+    projectPath: string;
+    prompt: string;
+    mode: 'agent' | 'ask' | 'plan';
+    model: string | null;
+    resumeId: string | null;
+    force: boolean;
+  },
+  signal: AbortSignal,
+): Promise<{ runId: string; lines: AsyncGenerator<RunnerLine> }> {
+  const response = await fetch(`${client.url}/runs`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${client.token}`,
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (response.status === 429) throw new RunnerBusyError();
+  if (!response.ok || !response.body) throw new RunnerRequestError('runner_rejected');
+  const lines = iterateRunner(response.body);
+  const first = await lines.next();
+  if (first.done || first.value.kind !== 'started') throw new RunnerRequestError('runner_protocol');
+  return { runId: first.value.runId, lines };
+}
+
+export async function stopRun(client: RunnerClient, runId: string): Promise<number> {
+  const response = await fetch(`${client.url}/runs/${runId}/stop`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${client.token}` },
+  });
+  return response.status;
+}
+
+export async function statPath(client: RunnerClient, projectPath: string): Promise<{ exists: boolean; isDirectory: boolean }> {
+  const url = new URL('/fs', client.url);
+  url.searchParams.set('path', projectPath);
+  const response = await fetch(url, { headers: { authorization: `Bearer ${client.token}` } });
+  if (response.status === 400) throw new RunnerRequestError('invalid_path');
+  if (!response.ok) throw new RunnerRequestError('runner_rejected');
+  const body = (await response.json()) as { exists?: boolean; isDirectory?: boolean };
+  return { exists: body.exists === true, isDirectory: body.isDirectory === true };
+}
+
+export async function cloneProject(client: RunnerClient, name: string, repoUrl: string): Promise<void> {
+  const response = await fetch(`${client.url}/repos`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${client.token}`,
+    },
+    body: JSON.stringify({ name, repoUrl }),
+  });
+  if (response.status === 409) throw new RunnerRequestError('exists');
+  if (!response.ok) throw new RunnerRequestError('clone_failed');
+}
+
+export function publicError(err: unknown): string {
+  const message = err instanceof Error ? err.message : 'runner_error';
+  return scrubSecrets(message).slice(0, 200);
+}

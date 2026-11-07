@@ -1,0 +1,88 @@
+name: shirei
+
+services:
+  runner:
+    build:
+      context: .
+      dockerfile: apps/runner/Dockerfile
+    image: shirei-runner
+    user: "10001:10001"
+    init: true
+    env_file:
+      - path: ./apps/runner/.env
+        required: true
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8787"
+      WORKSPACE_ROOT: /workspace
+    read_only: true
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,nosuid,size=256m,mode=1777
+      - /home/agent/.cache:rw,nosuid,size=128m,uid=10001,gid=10001,mode=700
+      - /home/agent/.config:rw,nosuid,size=64m,uid=10001,gid=10001,mode=700
+    volumes:
+      - ./data/workspaces:/workspace
+      - ./data/cursor-home:/home/agent/.cursor
+    restart: unless-stopped
+    networks:
+      - shirei_net
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  app:
+    build:
+      context: .
+      dockerfile: apps/app/Dockerfile
+    image: shirei-app
+    init: true
+    env_file:
+      - path: ./apps/app/.env
+        required: true
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATABASE_URL: file:/data/shirei.db
+      MIGRATIONS_DIR: /app/drizzle
+      RUNNER_URL: http://runner:8787
+      COOKIE_SECURE: "true"
+    ports:
+      - "127.0.0.1:3070:3000"
+    volumes:
+      - ./data/app:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=64m,mode=1777
+    mem_limit: 256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - runner
+    restart: unless-stopped
+    networks:
+      - shirei_net
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+networks:
+  shirei_net:
+    name: shirei_net

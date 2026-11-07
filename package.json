@@ -1,0 +1,16 @@
+{
+  "name": "shirei",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/app",
+    "apps/runner"
+  ],
+  "scripts": {
+    "test": "npm run test -w apps/runner && npm run test -w apps/app",
+    "hash-password": "npm run hash-password -w apps/app"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
