@@ -110,6 +110,41 @@ export function matchChoice(groups: ModelGroup[], modelId: string): ModelChoice 
   return null;
 }
 
+export const MODELS_CACHE_KEY = 'shirei.models';
+
+type KeyValueStore = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+};
+
+function isGroup(value: unknown): value is ModelGroup {
+  if (!value || typeof value !== 'object') return false;
+  const group = value as ModelGroup;
+  return typeof group.name === 'string' && Array.isArray(group.families);
+}
+
+export function readModelsCache(store: KeyValueStore): ModelGroup[] | null {
+  try {
+    const raw = store.getItem(MODELS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { groups?: unknown }).groups)) return null;
+    const groups = (parsed as { groups: unknown[] }).groups;
+    if (groups.length === 0 || !groups.every(isGroup)) return null;
+    return groups;
+  } catch {
+    return null;
+  }
+}
+
+export function writeModelsCache(store: KeyValueStore, groups: ModelGroup[]): void {
+  try {
+    store.setItem(MODELS_CACHE_KEY, JSON.stringify({ groups }));
+  } catch {
+    // The picker still renders the response when sessionStorage rejects the write.
+  }
+}
+
 export function resolveChoice(groups: ModelGroup[], choice: ModelChoice): { option: ModelOption; id: string } | null {
   const family = findFamily(groups, choice.familyId);
   if (!family) return null;

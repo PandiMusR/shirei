@@ -6,7 +6,9 @@ import { Header } from '../components/Header';
 import { StatusChip } from '../components/StatusChip';
 import { TimelineView } from '../components/TimelineView';
 import { syncDebugFlag } from '../debug';
+import { useLibrary } from '../library';
 import { readEventStream } from '../sse';
+import { isTerminalStatus } from '../taskList';
 import { clipLine, formatElapsed } from '../time';
 import {
   emptyTimeline,
@@ -96,6 +98,7 @@ export function TaskScreen() {
   const [debug, setDebug] = useState(() => syncDebugFlag(search));
   const navigate = useNavigate();
   const { setState } = useAuth();
+  const { noteTask } = useLibrary();
   const [task, setTask] = useState<Task | null>(null);
   const [projectName, setProjectName] = useState('');
   const [timeline, setTimeline] = useState<TimelineState>(emptyTimeline());
@@ -137,14 +140,17 @@ export function TaskScreen() {
     }
 
     async function refresh() {
-      const next = await api.task(id);
+      let next = await api.task(id);
       if (stopped) return;
       setTask(next);
       if (next.status === 'running') {
         await sleep(250);
-        const again = await api.task(id);
-        if (!stopped) setTask(again);
+        if (stopped) return;
+        next = await api.task(id);
+        if (stopped) return;
+        setTask(next);
       }
+      if (isTerminalStatus(next.status)) noteTask(next);
     }
 
     async function connect() {
@@ -243,7 +249,7 @@ export function TaskScreen() {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onVisible);
     };
-  }, [debug, id, navigate, setState]);
+  }, [debug, id, navigate, noteTask, setState]);
 
   useEffect(() => {
     const el = scroller.current;

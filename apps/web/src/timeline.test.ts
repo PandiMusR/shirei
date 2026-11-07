@@ -8,6 +8,7 @@ import {
   joinedAssistantText,
   lastLines,
   reduceTimeline,
+  shellHasOutput,
   systemInit,
   type TimelineEvent,
   type TimelineState,
@@ -262,6 +263,32 @@ describe('duplicate assistant flushes', () => {
       expect(tool.state).toBe('ok');
     }
     expect(lastLines('a\nb', 50)).toEqual({ text: 'a\nb', hidden: 0 });
+  });
+
+  it('hides shell output when stdout and stderr are blank', () => {
+    expect(shellHasOutput('', '')).toBe(false);
+    expect(shellHasOutput('\n  ', '\n')).toBe(false);
+    expect(shellHasOutput('ok', '')).toBe(true);
+    const state = reduceTimeline(emptyTimeline(), {
+      seq: 1,
+      type: 'tool_call',
+      payload: {
+        subtype: 'completed',
+        call_id: 'sh',
+        tool_call: {
+          shellToolCall: {
+            args: { command: 'true' },
+            result: { success: { command: 'true', exitCode: 0, stdout: '\n', stderr: '' } },
+          },
+        },
+      },
+    });
+    const tool = state.items.find((item) => item.kind === 'tool');
+    expect(tool?.kind).toBe('tool');
+    if (tool?.kind === 'tool' && tool.view.kind === 'shell') {
+      expect(tool.view.exitCode).toBe(0);
+      expect(shellHasOutput(tool.view.stdout, tool.view.stderr)).toBe(false);
+    }
   });
 
   it('reads the model from system/init and ignores other events', () => {
