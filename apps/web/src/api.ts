@@ -104,4 +104,9 @@ export const api = {
   stop(id: string) {
     return request<{ ok: true }>(`/api/tasks/${id}/stop`, { method: 'POST', body: JSON.stringify({}) });
   },
+  thread(id: string) {
+    return request<{ turns: Array<{ task: Task; events: Array<{ seq: number; type: string; payload: unknown }> }> }>(
+      `/api/tasks/${id}/thread`,
+    );
+  },
 };

@@ -6,11 +6,45 @@ export type TimelineEvent = {
 
 export type ToolState = 'running' | 'ok' | 'error';
 
+export type ToolView =
+  | {
+      kind: 'edit';
+      path: string;
+      file: string;
+      added: number | null;
+      removed: number | null;
+      diff: string | null;
+    }
+  | {
+      kind: 'shell';
+      command: string;
+      exitCode: number | null;
+      rejected: boolean;
+      stdout: string;
+      stderr: string;
+      stdoutHidden: number;
+      stderrHidden: number;
+    }
+  | { kind: 'read'; path: string; startLine: number | null; endLine: number | null }
+  | { kind: 'glob'; pattern: string; total: number | null; files: string[] }
+  | { kind: 'other' };
+
+export type FileChange = { path: string; file: string; added: number; removed: number };
+
 export type TimelineItem =
   | { kind: 'user'; seq: number; text: string }
   | { kind: 'assistant'; seq: number; text: string }
   | { kind: 'thinking'; seq: number; text: string; done: boolean }
-  | { kind: 'tool'; seq: number; callId: string; label: string; state: ToolState; detail: string; startedAt: number | null }
+  | {
+      kind: 'tool';
+      seq: number;
+      callId: string;
+      label: string;
+      state: ToolState;
+      detail: string;
+      startedAt: number | null;
+      view: ToolView;
+    }
   | { kind: 'result'; seq: number; text: string; durationMs: number | null; isError: boolean }
   | { kind: 'raw'; seq: number; type: string; text: string };
 
@@ -77,28 +111,141 @@ function toolEntry(payload: unknown): { key: string; body: Record<string, unknow
   return { key, body: isRecord(body) ? body : {} };
 }
 
-function toolLabel(payload: unknown): string {
-  const found = toolEntry(payload);
-  if (!found) return 'tool';
-  const name = found.key.replace(/ToolCall$/, '');
-  const args = isRecord(found.body.args) ? found.body.args : {};
-  if (typeof args.path === 'string' && args.path.length > 0) {
-    const file = args.path.split('/').pop() || args.path;
-    return `${name} ${file}`;
-  }
-  if (typeof args.command === 'string' && args.command.length > 0) {
-    const first = args.command.split('\n')[0] ?? args.command;
-    return first.length > 80 ? `${first.slice(0, 80)}…` : first;
-  }
-  return name;
+const OUTPUT_LINES = 50;
+
+export function lastLines(text: string, max = OUTPUT_LINES): { text: string; hidden: number } {
+  if (!text) return { text: '', hidden: 0 };
+  const lines = text.split('\n');
+  if (lines.length <= max) return { text, hidden: 0 };
+  return { text: lines.slice(lines.length - max).join('\n'), hidden: lines.length - max };
 }
 
-function toolState(payload: unknown, completed: boolean): ToolState {
+function asString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function fileName(path: string): string {
+  const base = path.split('/').pop();
+  return base && base.length > 0 ? base : path;
+}
+
+function resultOf(body: Record<string, unknown>): { key: string; inner: Record<string, unknown> } | null {
+  if (!isRecord(body.result)) return null;
+  const key = Object.keys(body.result)[0];
+  if (!key) return null;
+  const inner = body.result[key];
+  return { key, inner: isRecord(inner) ? inner : {} };
+}
+
+function countDiff(diff: string | null, mark: '+' | '-'): number {
+  if (!diff) return 0;
+  const fence = mark === '+' ? '+++' : '---';
+  let count = 0;
+  for (const line of diff.split('\n')) {
+    if (line.startsWith(mark) && !line.startsWith(fence)) count += 1;
+  }
+  return count;
+}
+
+function toolView(key: string, body: Record<string, unknown>): ToolView {
+  const args = isRecord(body.args) ? body.args : {};
+  const result = resultOf(body);
+  if (key === 'editToolCall') {
+    const path = asString(result?.inner.path) ?? asString(args.path) ?? '';
+    return {
+      kind: 'edit',
+      path,
+      file: fileName(path),
+      added: asNumber(result?.inner.linesAdded),
+      removed: asNumber(result?.inner.linesRemoved),
+      diff: asString(result?.inner.diffString),
+    };
+  }
+  if (key === 'shellToolCall') {
+    const stdout = lastLines(asString(result?.inner.stdout) ?? '');
+    const stderr = lastLines(asString(result?.inner.stderr) ?? '');
+    return {
+      kind: 'shell',
+      command: asString(args.command) ?? asString(result?.inner.command) ?? '',
+      exitCode: asNumber(result?.inner.exitCode),
+      rejected: result?.key === 'rejected',
+      stdout: stdout.text,
+      stderr: stderr.text,
+      stdoutHidden: stdout.hidden,
+      stderrHidden: stderr.hidden,
+    };
+  }
+  if (key === 'readToolCall') {
+    const range = result && isRecord(result.inner.readRange) ? result.inner.readRange : null;
+    return {
+      kind: 'read',
+      path: asString(args.path) ?? asString(result?.inner.path) ?? '',
+      startLine: range ? asNumber(range.startLine) : null,
+      endLine: range ? asNumber(range.endLine) : null,
+    };
+  }
+  if (key === 'globToolCall') {
+    const files = Array.isArray(result?.inner.files)
+      ? result.inner.files.filter((file): file is string => typeof file === 'string')
+      : [];
+    return {
+      kind: 'glob',
+      pattern: asString(args.globPattern) ?? asString(result?.inner.pattern) ?? '',
+      total: asNumber(result?.inner.totalFiles),
+      files,
+    };
+  }
+  return { kind: 'other' };
+}
+
+function toolLabel(key: string, view: ToolView): string {
+  if (view.kind === 'edit') {
+    const name = view.file || 'edit';
+    if (view.added == null && view.removed == null) return name;
+    return `${name} +${view.added ?? 0} −${view.removed ?? 0}`;
+  }
+  if (view.kind === 'shell') {
+    const first = view.command.split('\n')[0] ?? view.command;
+    if (!first) return 'shell';
+    return first.length > 80 ? `${first.slice(0, 80)}…` : first;
+  }
+  if (view.kind === 'read') return view.path || 'read';
+  if (view.kind === 'glob') return view.pattern || 'glob';
+  return key.replace(/ToolCall$/, '') || 'tool';
+}
+
+function toolState(body: Record<string, unknown> | null, completed: boolean): ToolState {
   if (!completed) return 'running';
-  const found = toolEntry(payload);
-  const result = found && isRecord(found.body.result) ? found.body.result : null;
-  if (result && ('failure' in result || 'error' in result)) return 'error';
+  const result = body && isRecord(body.result) ? body.result : null;
+  if (result && ('failure' in result || 'error' in result || 'rejected' in result)) return 'error';
   return 'ok';
+}
+
+export function systemInit(event: TimelineEvent): { model: string | null } | null {
+  if (event.type !== 'system' || !isRecord(event.payload) || event.payload.subtype !== 'init') return null;
+  const model = typeof event.payload.model === 'string' && event.payload.model.length > 0 ? event.payload.model : null;
+  return { model };
+}
+
+export function filesChanged(state: TimelineState): FileChange[] {
+  const byPath = new Map<string, FileChange>();
+  for (const item of state.items) {
+    if (item.kind !== 'tool' || item.view.kind !== 'edit' || item.state === 'running') continue;
+    const added = item.view.added ?? countDiff(item.view.diff, '+');
+    const removed = item.view.removed ?? countDiff(item.view.diff, '-');
+    const prev = byPath.get(item.view.path);
+    if (prev) {
+      prev.added += added;
+      prev.removed += removed;
+      continue;
+    }
+    byPath.set(item.view.path, { path: item.view.path, file: item.view.file || item.view.path, added, removed });
+  }
+  return [...byPath.values()];
 }
 
 function eventTime(payload: unknown): number | null {
@@ -176,14 +323,17 @@ export function reduceTimeline(state: TimelineState, event: TimelineEvent): Time
   if (event.type === 'tool_call') {
     const id = callIdOf(payload);
     const completed = subtypeOf(payload) === 'completed';
+    const found = toolEntry(payload);
+    const view = found ? toolView(found.key, found.body) : { kind: 'other' as const };
     const next: TimelineItem = {
       kind: 'tool',
       seq: event.seq,
       callId: id,
-      label: toolLabel(payload),
-      state: toolState(payload, completed),
+      label: found ? toolLabel(found.key, view) : 'tool',
+      state: toolState(found?.body ?? null, completed),
       detail: detailOf(payload),
       startedAt: eventTime(payload),
+      view,
     };
     const index = state.items.findIndex((item) => item.kind === 'tool' && item.callId === id);
     if (index >= 0) {

@@ -22,6 +22,7 @@ import {
   markInterrupted,
   requestStop,
   RunnerBusyError,
+  sessionTurns,
   startTask,
   subscribe,
 } from './tasks';
@@ -44,6 +45,14 @@ const taskBody = z.object({
 });
 
 const RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._][A-Za-z0-9._/-]{0,200}$/;
+
+function parsePayload(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return { raw };
+  }
+}
 
 function taskJson(task: Task) {
   return {
@@ -205,6 +214,18 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
     return c.json({ task: taskJson(task) });
   });
 
+  authed.get('/tasks/:id/thread', async (c) => {
+    const task = await getTask(db, c.req.param('id'));
+    if (!task) return c.json({ error: 'not_found' }, 404);
+    const turns = await sessionTurns(db, task.id);
+    return c.json({
+      turns: turns.map(({ task: row, events: rows }) => ({
+        task: taskJson(row),
+        events: rows.map((event) => ({ seq: event.seq, type: event.type, payload: parsePayload(event.payload) })),
+      })),
+    });
+  });
+
   authed.post('/tasks/:id/stop', async (c) => {
     const task = await getTask(db, c.req.param('id'));
     if (!task) return c.json({ error: 'not_found' }, 404);
@@ -222,6 +243,7 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
     const after = Number(raw);
     const startAfter = Number.isInteger(after) && after >= 0 ? after : 0;
 
+    c.header('X-Accel-Buffering', 'no');
     return streamSSE(c, async (stream) => {
       const pending: Array<{ seq: number; type: string; subtype: string | null; payload: string }> = [];
       let wake: (() => void) | null = null;
@@ -244,7 +266,9 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
         seen.add(event.seq);
         await stream.writeSSE({ id: String(event.seq), event: event.type, data: event.payload });
       };
+      await stream.write(': open\n\n');
       const ping = setInterval(() => {
+        if (aborted) return;
         void stream.write(': ping\n\n');
       }, 15_000);
       try {

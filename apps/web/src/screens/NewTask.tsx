@@ -32,6 +32,7 @@ export function NewTask() {
   const [force, setForce] = useState(false);
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
+  const [projectsReady, setProjectsReady] = useState(false);
 
   useEffect(() => {
     let cancel = false;
@@ -45,6 +46,9 @@ export function NewTask() {
       })
       .catch((err) => {
         if (!cancel) setError(explain(err));
+      })
+      .finally(() => {
+        if (!cancel) setProjectsReady(true);
       });
     return () => {
       cancel = true;
@@ -114,7 +118,12 @@ export function NewTask() {
     <main className="screen">
       <Header title="New task" back />
       <form className="scroll stack" onSubmit={(event) => void submit(event)}>
-        {projects.length === 0 ? <p className="quiet">Add a project on the home screen first.</p> : null}
+        {!projectsReady ? (
+          <div className="skeleton-stack" aria-hidden="true">
+            <div className="skeleton" />
+          </div>
+        ) : null}
+        {projectsReady && projects.length === 0 ? <p className="quiet">Add a project on the home screen first.</p> : null}
         <label htmlFor="task-project">Project</label>
         <select id="task-project" value={projectId} onChange={(event) => setProjectId(event.target.value)} required>
           {projects.map((project) => (
