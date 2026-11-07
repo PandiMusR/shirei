@@ -1,12 +1,20 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { api, ApiError, explain, type Task } from '../api';
 import { useAuth } from '../App';
 import { Header } from '../components/Header';
 import { StatusChip } from '../components/StatusChip';
 import { TimelineView } from '../components/TimelineView';
 import { readEventStream } from '../sse';
-import { emptyTimeline, promptEvent, reduceTimeline, type TimelineState } from '../timeline';
+import { clipLine, formatElapsed } from '../time';
+import {
+  emptyTimeline,
+  promptEvent,
+  reduceTimeline,
+  systemInit,
+  type TimelineEvent,
+  type TimelineState,
+} from '../timeline';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -14,17 +22,88 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function clock(date = new Date()): string {
+  const pad = (value: number, width = 2) => String(value).padStart(width, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+}
+
+type Arrival = { seq: number; type: string; offset: number; gap: number; clock: string };
+
+type PriorTurn = { task: Task; timeline: TimelineState };
+
+function timelineFrom(prompt: string, events: TimelineEvent[]): TimelineState {
+  let state = reduceTimeline(emptyTimeline(), promptEvent(prompt));
+  for (const event of events) state = reduceTimeline(state, event);
+  return state;
+}
+
+function fitFollow(el: HTMLTextAreaElement) {
+  const style = getComputedStyle(el);
+  const line = parseFloat(style.lineHeight) || 22;
+  const pad = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+  const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+  const max = line * 5 + pad + border;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+  el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden';
+}
+
+function AgentStatus({ startedAt, ready, model }: { startedAt: number | null; ready: boolean; model: string }) {
+  const fallback = useRef(Date.now());
+  const origin = startedAt ?? fallback.current;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (ready) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [ready]);
+  return (
+    <p className="agent-status" role="status">
+      {ready ? `Agent ready · ${model}` : `Starting agent… ${formatElapsed(now - origin)}`}
+    </p>
+  );
+}
+
+function DebugOverlay({ rows }: { rows: Arrival[] }) {
+  const first = rows.find((row) => row.type !== 'open');
+  const last = rows.length > 0 ? rows[rows.length - 1] : undefined;
+  const span = first && last ? last.offset - first.offset : 0;
+  const maxGap = rows.reduce((max, row) => Math.max(max, row.gap), 0);
+  return (
+    <aside className="debug" aria-label="Stream debug">
+      <p>
+        {rows.filter((row) => row.type !== 'open').length} events · span {span}ms · max gap {maxGap}ms
+      </p>
+      <ol>
+        {rows.map((row, index) => (
+          <li key={`${row.clock}-${row.seq}-${index}`}>
+            {row.clock} +{row.offset}ms Δ{row.gap}ms {row.type}
+            {row.type === 'open' ? '' : ` #${row.seq}`}
+          </li>
+        ))}
+      </ol>
+    </aside>
+  );
+}
+
 export function TaskScreen() {
   const { id = '' } = useParams();
+  const [params] = useSearchParams();
+  const debug = params.get('debug') === '1';
   const navigate = useNavigate();
   const { setState } = useAuth();
   const [task, setTask] = useState<Task | null>(null);
+  const [projectName, setProjectName] = useState('');
   const [timeline, setTimeline] = useState<TimelineState>(emptyTimeline());
+  const [prior, setPrior] = useState<PriorTurn[]>([]);
+  const [agent, setAgent] = useState<{ ready: boolean; model: string | null }>({ ready: false, model: null });
+  const [arrivals, setArrivals] = useState<Arrival[]>([]);
   const [missing, setMissing] = useState(false);
   const [follow, setFollow] = useState('');
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const followBox = useRef<HTMLTextAreaElement>(null);
   const stick = useRef(true);
 
   useEffect(() => {
@@ -33,6 +112,21 @@ export function TaskScreen() {
     let running = false;
     let ctrl: AbortController | null = null;
     const last = { seq: 0 };
+    const origin = { t: 0 };
+    let previous = 0;
+
+    function note(seq: number, type: string) {
+      if (!debug) return;
+      const at = performance.now();
+      if (origin.t === 0) {
+        origin.t = at;
+        previous = at;
+      }
+      const offset = Math.round(at - origin.t);
+      const gap = Math.round(at - previous);
+      previous = at;
+      setArrivals((rows) => [...rows, { seq, type, offset, gap, clock: clock() }]);
+    }
 
     async function refresh() {
       const next = await api.task(id);
@@ -50,9 +144,13 @@ export function TaskScreen() {
       running = true;
       const ac = new AbortController();
       ctrl = ac;
+      note(0, 'open');
       try {
         await readEventStream(`/api/tasks/${id}/stream?after=${last.seq}`, ac.signal, (event) => {
+          note(event.seq, event.type);
           if (event.seq > last.seq) last.seq = event.seq;
+          const init = systemInit(event);
+          if (init) setAgent({ ready: true, model: init.model });
           setTimeline((prev) => reduceTimeline(prev, event));
           if (event.type === 'runner') {
             ended = true;
@@ -82,12 +180,38 @@ export function TaskScreen() {
     async function boot() {
       setTimeline(emptyTimeline());
       setTask(null);
+      setProjectName('');
+      setPrior([]);
+      setAgent({ ready: false, model: null });
+      setArrivals([]);
       setMissing(false);
+      setFollow('');
+      origin.t = 0;
+      previous = 0;
+      if (followBox.current) followBox.current.style.height = 'auto';
       try {
         const loaded = await api.task(id);
         if (stopped) return;
         setTask(loaded);
         setTimeline(reduceTimeline(emptyTimeline(), promptEvent(loaded.prompt)));
+        void api
+          .projects()
+          .then((body) => {
+            if (stopped) return;
+            setProjectName(body.projects.find((project) => project.id === loaded.projectId)?.name ?? '');
+          })
+          .catch(() => undefined);
+        if (loaded.sessionId) {
+          void api
+            .thread(id)
+            .then((body) => {
+              if (stopped) return;
+              setPrior(body.turns.map((turn) => ({ task: turn.task, timeline: timelineFrom(turn.task.prompt, turn.events) })));
+            })
+            .catch((err) => {
+              if (!stopped) setError(explain(err));
+            });
+        }
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) setMissing(true);
         else if (err instanceof ApiError && err.status === 401) {
@@ -111,13 +235,13 @@ export function TaskScreen() {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onVisible);
     };
-  }, [id, navigate, setState]);
+  }, [debug, id, navigate, setState]);
 
   useEffect(() => {
     const el = scroller.current;
     if (!el || !stick.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [timeline]);
+  }, [timeline, prior]);
 
   async function stop() {
     setPending(true);
@@ -145,6 +269,7 @@ export function TaskScreen() {
         force: false,
         resumeTaskId: task.id,
       });
+      setFollow('');
       navigate(`/tasks/${next.id}`);
     } catch (err) {
       setError(explain(err));
@@ -154,16 +279,22 @@ export function TaskScreen() {
   }
 
   const running = task?.status === 'running' || task?.status === 'queued';
+  const hasOutput = timeline.items.some((item) => item.kind === 'assistant' || item.kind === 'tool');
+  const chosen = task?.model ?? 'auto';
+  const title = task ? (projectName ? `${projectName} · ${chosen}` : chosen) : 'Task';
 
   return (
     <main className="screen">
-      <Header title={task ? task.prompt.replace(/\s+/g, ' ').trim() : 'Task'} back />
+      <Header title={title} back />
       {task ? (
         <div className="task-meta">
           <StatusChip status={task.status} />
           <span className="quiet">{task.mode}</span>
           <span className="quiet model-id">{task.model ?? 'auto'}</span>
         </div>
+      ) : null}
+      {running && !hasOutput ? (
+        <AgentStatus startedAt={task?.startedAt ?? null} ready={agent.ready} model={agent.model ?? chosen} />
       ) : null}
       <div
         className="scroll thread-scroll"
@@ -173,7 +304,14 @@ export function TaskScreen() {
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
       >
+        {debug ? <DebugOverlay rows={arrivals} /> : null}
         {missing ? <p className="quiet">This task is gone.</p> : null}
+        {prior.map((turn) => (
+          <details key={turn.task.id} className="prior">
+            <summary>{clipLine(turn.task.prompt)}</summary>
+            <TimelineView timeline={turn.timeline} status={turn.task.status} error={turn.task.error} />
+          </details>
+        ))}
         <TimelineView timeline={timeline} status={task?.status ?? null} error={task?.error ?? null} />
       </div>
       {running ? (
@@ -187,15 +325,14 @@ export function TaskScreen() {
         <form className="bar follow" onSubmit={(event) => void send(event)}>
           {error ? <p className="form-error">{error}</p> : null}
           <textarea
+            ref={followBox}
             aria-label="Follow up"
             placeholder="Follow up"
             rows={1}
             value={follow}
             onChange={(event) => {
               setFollow(event.target.value);
-              const el = event.currentTarget;
-              el.style.height = 'auto';
-              el.style.height = `${el.scrollHeight}px`;
+              fitFollow(event.currentTarget);
             }}
           />
           <button type="submit" className="primary slim" disabled={pending || follow.trim().length === 0}>

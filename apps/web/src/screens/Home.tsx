@@ -20,6 +20,7 @@ export function Home() {
   const [repoUrl, setRepoUrl] = useState('');
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [ready, setReady] = useState(false);
 
   async function load() {
     const [projectBody, taskBody] = await Promise.all([api.projects(), api.tasks()]);
@@ -32,6 +33,9 @@ export function Home() {
     load()
       .catch((err) => {
         if (!cancel) setError(explain(err));
+      })
+      .finally(() => {
+        if (!cancel) setReady(true);
       });
     return () => {
       cancel = true;
@@ -43,6 +47,7 @@ export function Home() {
   }
 
   async function logout() {
+    if (!window.confirm('Log out?')) return;
     await api.logout().catch(() => undefined);
     setState('out');
     navigate('/login', { replace: true });
@@ -82,7 +87,13 @@ export function Home() {
               New project
             </button>
           </div>
-          {projects.length === 0 ? <p className="quiet">Add a folder on this machine, or a GitHub repo.</p> : null}
+          {!ready ? (
+            <div className="skeleton-stack" aria-hidden="true">
+              <div className="skeleton" />
+              <div className="skeleton short" />
+            </div>
+          ) : null}
+          {ready && projects.length === 0 ? <p className="quiet">Add a folder on this machine, or a GitHub repo.</p> : null}
           <ul className="list">
             {projects.map((project) => {
               const last = lastTask(project.id);

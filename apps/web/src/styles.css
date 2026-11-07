@@ -337,18 +337,45 @@ textarea { resize: none; min-height: 120px; max-height: 40vh; line-height: 1.45;
   border: 1px solid var(--line);
   border-radius: 14px;
 }
-.tool-btn {
-  width: 100%;
+.tool-head {
   min-height: 48px;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border: 0;
-  background: transparent;
-  text-align: left;
 }
-.tool-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tool-note, .tool-command {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.tool-command {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tool-fold { padding: 0 12px 8px; }
+.tool-fold summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.tool-files { margin: 0 0 8px; padding-left: 1.1em; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12px; }
+.raw-toggle { min-height: 36px; padding: 0 12px 8px; font-size: 0.8rem; }
+.diff {
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.diff div { padding: 0 12px; white-space: pre; }
+.diff-add { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.diff-del { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.diff-hunk, .diff-meta { color: var(--muted); }
+.badge-ok { color: var(--ok); border-color: var(--ok); }
+.badge-bad { color: var(--bad); border-color: var(--bad); }
+.tool-head .badge { margin-left: auto; margin-right: 0; flex: none; }
 .tool-elapsed {
   margin-left: auto;
   flex: none;
@@ -392,6 +419,52 @@ textarea { resize: none; min-height: 120px; max-height: 40vh; line-height: 1.45;
 .result-ok { color: var(--ok); }
 .result-bad { color: var(--bad); }
 .result-text, .result-note { flex-basis: 100%; margin: 0; }
+.files-changed { flex-basis: 100%; }
+.files-changed p { margin: 8px 0 4px; color: var(--text); }
+.files-changed ul { margin: 0; padding-left: 1.1em; }
+.files-changed li { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.85rem; }
+.agent-status {
+  margin: 8px 16px 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.prior {
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+}
+.prior summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.prior .thread { padding: 0 12px 12px; }
+.debug {
+  margin: 0 0 12px;
+  max-height: 28vh;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.debug p { margin: 0 0 6px; }
+.debug ol { list-style: none; margin: 0; padding: 0; }
+.skeleton-stack { display: flex; flex-direction: column; gap: 8px; }
+.skeleton {
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, var(--paper), var(--raised), var(--paper));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease infinite;
+}
+.skeleton.short { width: 70%; }
 .raw { color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
 .raw span { text-transform: uppercase; letter-spacing: 0.04em; }
 
@@ -402,7 +475,13 @@ textarea { resize: none; min-height: 120px; max-height: 40vh; line-height: 1.45;
   background: color-mix(in srgb, var(--ink) 92%, transparent);
   border-top: 1px solid var(--line);
 }
-.bar.follow textarea { min-height: 48px; max-height: 120px; flex: 1; }
+.bar.follow textarea {
+  min-height: 48px;
+  max-height: calc(1.4em * 5 + 24px);
+  line-height: 1.4;
+  overflow-y: auto;
+  flex: 1;
+}
 .bar .form-error { margin-bottom: 8px; }
 
 .sheet-backdrop {
@@ -432,6 +511,7 @@ textarea { resize: none; min-height: 120px; max-height: 40vh; line-height: 1.45;
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

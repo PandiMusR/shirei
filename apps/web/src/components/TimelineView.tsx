@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatDuration, formatElapsed } from '../time';
-import { joinedAssistantText, type TimelineItem, type TimelineState } from '../timeline';
+import { filesChanged, joinedAssistantText, type TimelineItem, type TimelineState, type ToolView } from '../timeline';
 import { Markdown } from './Markdown';
 
 function Elapsed({ startedAt }: { startedAt: number | null }) {
@@ -14,16 +14,102 @@ function Elapsed({ startedAt }: { startedAt: number | null }) {
   return <span className="tool-elapsed">{formatElapsed(now - origin)}</span>;
 }
 
+function diffKind(line: string): 'add' | 'del' | 'hunk' | 'meta' | 'ctx' {
+  if (line.startsWith('+++') || line.startsWith('---')) return 'meta';
+  if (line.startsWith('@@')) return 'hunk';
+  if (line.startsWith('+')) return 'add';
+  if (line.startsWith('-')) return 'del';
+  return 'ctx';
+}
+
+function DiffBlock({ diff }: { diff: string }) {
+  return (
+    <pre className="diff">
+      {diff.split('\n').map((line, index) => (
+        <div key={`${index}-${line.slice(0, 12)}`} className={`diff-${diffKind(line)}`}>
+          {line.length > 0 ? line : ' '}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+function ShellBadge({ view, running }: { view: Extract<ToolView, { kind: 'shell' }>; running: boolean }) {
+  if (running) return null;
+  if (view.rejected) return <span className="badge badge-bad">rejected</span>;
+  if (view.exitCode == null) return null;
+  const ok = view.exitCode === 0;
+  return <span className={ok ? 'badge badge-ok' : 'badge badge-bad'}>{view.exitCode}</span>;
+}
+
+function ShellBody({ view }: { view: Extract<ToolView, { kind: 'shell' }> }) {
+  if (!view.stdout && !view.stderr) return null;
+  return (
+    <details className="tool-fold">
+      <summary>Output</summary>
+      {view.stdout ? (
+        <pre className="tool-detail">
+          {view.stdoutHidden > 0 ? `… ${view.stdoutHidden} earlier lines\n` : ''}
+          {view.stdout}
+        </pre>
+      ) : null}
+      {view.stderr ? (
+        <pre className="tool-detail tool-stderr">
+          {view.stderrHidden > 0 ? `… ${view.stderrHidden} earlier lines\n` : ''}
+          {view.stderr}
+        </pre>
+      ) : null}
+    </details>
+  );
+}
+
+function GlobBody({ view }: { view: Extract<ToolView, { kind: 'glob' }> }) {
+  if (view.total == null && view.files.length === 0) return null;
+  const count = view.total ?? view.files.length;
+  if (view.files.length === 0) return <p className="tool-note">{count} files</p>;
+  return (
+    <details className="tool-fold">
+      <summary>
+        {count} {count === 1 ? 'file' : 'files'}
+      </summary>
+      <ul className="tool-files">
+        {view.files.map((file) => (
+          <li key={file}>{file}</li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+function ReadNote({ view }: { view: Extract<ToolView, { kind: 'read' }> }) {
+  if (view.startLine == null || view.endLine == null) return null;
+  return (
+    <p className="tool-note">
+      lines {view.startLine}–{view.endLine}
+    </p>
+  );
+}
+
 function ToolCard({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
-  const [open, setOpen] = useState(false);
+  const [raw, setRaw] = useState(false);
+  const view = item.view;
   return (
     <li className={`card tool tool-${item.state}`}>
-      <button type="button" className="tool-btn" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <div className="tool-head">
         <span className={item.state === 'running' ? 'spinner' : `mark mark-${item.state}`} aria-hidden="true" />
         <span className="tool-label">{item.label}</span>
+        {view.kind === 'shell' ? <ShellBadge view={view} running={item.state === 'running'} /> : null}
         {item.state === 'running' ? <Elapsed startedAt={item.startedAt} /> : null}
+      </div>
+      {view.kind === 'edit' && view.diff ? <DiffBlock diff={view.diff} /> : null}
+      {view.kind === 'shell' && view.command && view.command !== item.label ? <pre className="tool-command">{view.command}</pre> : null}
+      {view.kind === 'shell' ? <ShellBody view={view} /> : null}
+      {view.kind === 'read' ? <ReadNote view={view} /> : null}
+      {view.kind === 'glob' ? <GlobBody view={view} /> : null}
+      <button type="button" className="text-btn raw-toggle" aria-pressed={raw} onClick={() => setRaw((value) => !value)}>
+        {raw ? 'Hide raw' : 'Raw'}
       </button>
-      {open ? <pre className="tool-detail">{item.detail}</pre> : null}
+      {raw ? <pre className="tool-detail">{item.detail}</pre> : null}
     </li>
   );
 }
@@ -45,6 +131,7 @@ export function TimelineView({
   error: string | null;
 }) {
   const assistant = joinedAssistantText(timeline);
+  const changed = filesChanged(timeline);
   return (
     <ol className="thread">
       {timeline.items.map((item) => {
@@ -83,6 +170,18 @@ export function TimelineView({
               {item.durationMs != null ? <span>{formatDuration(item.durationMs)}</span> : null}
               {error ? <span className="result-note">{error}</span> : null}
               {showText ? <p className="result-text">{item.text}</p> : null}
+              {changed.length > 0 ? (
+                <div className="files-changed">
+                  <p>Files changed</p>
+                  <ul>
+                    {changed.map((file) => (
+                      <li key={file.path}>
+                        {file.file} +{file.added} −{file.removed}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </li>
           );
         }

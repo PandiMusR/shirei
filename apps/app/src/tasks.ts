@@ -78,6 +78,28 @@ export async function getTask(db: Database, id: string): Promise<Task | undefine
   return rows[0];
 }
 
+export type SessionTurn = { id: string; sessionId: string | null; createdAt: number };
+
+/** Earlier tasks in the same agent session, oldest first. */
+export function earlierTurns<T extends SessionTurn>(current: T, rows: T[]): T[] {
+  if (!current.sessionId) return [];
+  return rows
+    .filter((row) => row.id !== current.id && row.sessionId === current.sessionId && row.createdAt < current.createdAt)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+}
+
+export async function sessionTurns(db: Database, taskId: string): Promise<Array<{ task: Task; events: EventRow[] }>> {
+  const current = await getTask(db, taskId);
+  if (!current?.sessionId) return [];
+  const rows = await db.select().from(tasks).where(eq(tasks.sessionId, current.sessionId));
+  const prior = earlierTurns(current, rows);
+  const turns: Array<{ task: Task; events: EventRow[] }> = [];
+  for (const task of prior) {
+    turns.push({ task, events: await eventsAfter(db, task.id, 0) });
+  }
+  return turns;
+}
+
 export async function eventsAfter(db: Database, taskId: string, after: number): Promise<EventRow[]> {
   return db
     .select()
