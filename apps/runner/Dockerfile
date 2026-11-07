@@ -17,6 +17,10 @@ RUN apt-get update \
  && mkdir -p /workspace /home/agent/.cursor /home/agent/.config /home/agent/.cache /opt/shirei \
  && chown -R 10001:10001 /workspace /home/agent /opt/shirei
 WORKDIR /opt/shirei
+COPY package.json package-lock.json ./
+COPY apps/runner/package.json apps/runner/package.json
+RUN npm ci --omit=dev -w apps/runner --include-workspace-root=false \
+ && npm cache clean --force
 COPY --from=build /src/apps/runner/dist ./dist
 ENV HOME=/home/agent \
     PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
