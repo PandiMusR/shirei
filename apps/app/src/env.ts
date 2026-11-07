@@ -24,6 +24,9 @@ const schema = z
       .default('http://127.0.0.1:8787'),
     RUNNER_TOKEN: z.string().min(16),
     WEB_ROOT: z.string().min(1).optional(),
+    VAPID_PUBLIC_KEY: z.string().min(1),
+    VAPID_PRIVATE_KEY: z.string().min(1),
+    VAPID_SUBJECT: z.string().regex(/^mailto:/, 'must be a mailto: address'),
   })
   .transform((value) => ({
     ...value,

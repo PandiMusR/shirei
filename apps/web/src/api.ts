@@ -104,6 +104,18 @@ export const api = {
   stop(id: string) {
     return request<{ ok: true }>(`/api/tasks/${id}/stop`, { method: 'POST', body: JSON.stringify({}) });
   },
+  pushKey() {
+    return request<{ publicKey: string }>('/api/push/key');
+  },
+  subscribePush(body: { endpoint: string; keys: { p256dh: string; auth: string } }) {
+    return request<{ ok: true }>('/api/push/subscribe', { method: 'POST', body: JSON.stringify(body) });
+  },
+  unsubscribePush(endpoint: string) {
+    return request<{ ok: true }>('/api/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }) });
+  },
+  pushTest() {
+    return request<{ ok: true }>('/api/push/test', { method: 'POST', body: JSON.stringify({}) });
+  },
   thread(id: string) {
     return request<{ turns: Array<{ task: Task; events: Array<{ seq: number; type: string; payload: unknown }> }> }>(
       `/api/tasks/${id}/thread`,

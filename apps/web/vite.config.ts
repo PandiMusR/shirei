@@ -12,6 +12,9 @@ export default defineConfig({
     VitePWA({
       registerType: pwaRegisterType,
       injectRegister: null,
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       includeAssets: ['favicon.svg', 'pwa-192.png', 'pwa-512.png'],
       manifest: {
         name: 'Shirei',
@@ -26,7 +29,10 @@ export default defineConfig({
           { src: 'pwa-512.png', sizes: '512x512', type: 'image/png' },
         ],
       },
-      workbox: pwaWorkbox,
+      injectManifest: {
+        globPatterns: pwaWorkbox.globPatterns,
+        globIgnores: pwaWorkbox.globIgnores,
+      },
       devOptions: { enabled: false },
     }),
   ],

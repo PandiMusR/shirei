@@ -12,6 +12,20 @@ type Listener = (event: EventRow) => void;
 const listeners = new Map<string, Set<Listener>>();
 const aborts = new Set<AbortController>();
 let shuttingDown = false;
+let onFinished: ((taskId: string) => Promise<void>) | null = null;
+
+export function setTaskFinishedHook(hook: ((taskId: string) => Promise<void>) | null): void {
+  onFinished = hook;
+}
+
+async function notify(taskId: string): Promise<void> {
+  if (!onFinished) return;
+  try {
+    await onFinished(taskId);
+  } catch {
+    console.log(`push failed ${taskId}`);
+  }
+}
 
 export function subscribe(taskId: string, listener: Listener): () => void {
   let set = listeners.get(taskId);
@@ -33,10 +47,12 @@ function publish(event: EventRow): void {
 }
 
 export async function markInterrupted(db: Database, nowMs = Date.now()): Promise<void> {
-  await db
+  const changed = await db
     .update(tasks)
     .set({ status: 'interrupted', endedAt: nowMs, error: 'app restarted' })
-    .where(eq(tasks.status, 'running'));
+    .where(eq(tasks.status, 'running'))
+    .returning({ id: tasks.id });
+  for (const row of changed) await notify(row.id);
 }
 
 export function beginShutdown(): void {
@@ -174,32 +190,38 @@ async function consume(db: Database, taskId: string, lines: AsyncGenerator<Runne
         const endedAt = Date.now();
         const current = await getTask(db, taskId);
         const duration = durationMs ?? (current?.startedAt ? endedAt - current.startedAt : null);
-        await db
+        const changed = await db
           .update(tasks)
           .set({ status: finished.status, error: finished.error, endedAt, durationMs: duration })
-          .where(eq(tasks.id, taskId));
+          .where(and(eq(tasks.id, taskId), eq(tasks.status, 'running')))
+          .returning({ id: tasks.id });
         await appendEvent(db, taskId, {
           type: 'runner',
           subtype: 'exit',
           payload: { code: line.code, signal: line.signal, timedOut: line.timedOut, stopped: line.stopped },
         });
         console.log(`task ${taskId} ${finished.status}`);
+        if (changed.length > 0) await notify(taskId);
       }
     }
     if (!sawExit && !shuttingDown) {
-      await db
+      const changed = await db
         .update(tasks)
         .set({ status: 'failed', error: 'stream closed', endedAt: Date.now() })
-        .where(and(eq(tasks.id, taskId), eq(tasks.status, 'running')));
+        .where(and(eq(tasks.id, taskId), eq(tasks.status, 'running')))
+        .returning({ id: tasks.id });
+      if (changed.length > 0) await notify(taskId);
     }
   } catch (err) {
     if (shuttingDown) return;
     const message = scrubSecrets(err instanceof Error ? err.message : 'runner_error').slice(0, 500);
-    await db
+    const changed = await db
       .update(tasks)
       .set({ status: 'failed', error: message, endedAt: Date.now() })
-      .where(and(eq(tasks.id, taskId), eq(tasks.status, 'running')));
+      .where(and(eq(tasks.id, taskId), eq(tasks.status, 'running')))
+      .returning({ id: tasks.id });
     console.log(`task ${taskId} failed`);
+    if (changed.length > 0) await notify(taskId);
   }
 }
 
@@ -270,10 +292,12 @@ export async function requestStop(db: Database, client: RunnerClient, task: Task
   if (task.status !== 'running' || !task.runnerRunId) return 'not_running';
   const status = await stopRun(client, task.runnerRunId);
   if (status === 404) {
-    await db
+    const changed = await db
       .update(tasks)
       .set({ status: 'stopped', endedAt: Date.now(), error: null })
-      .where(and(eq(tasks.id, task.id), eq(tasks.status, 'running')));
+      .where(and(eq(tasks.id, task.id), eq(tasks.status, 'running')))
+      .returning({ id: tasks.id });
+    if (changed.length > 0) await notify(task.id);
     return 'stopped';
   }
   return 'accepted';

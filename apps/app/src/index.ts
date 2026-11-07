@@ -8,9 +8,8 @@ const env = parseEnv(process.env);
 
 const database = await openDatabase(env.DATABASE_URL);
 await runMigrations(database.client, env.MIGRATIONS_DIR);
-await prepareDatabase(database.db);
-
 const app = createApp({ env, db: database.db });
+await prepareDatabase(database.db);
 let closing = false;
 
 async function stop(signal: string): Promise<void> {
