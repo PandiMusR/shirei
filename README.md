@@ -1,10 +1,11 @@
 # Shirei
 
-Personal backend for running Cursor CLI headless. Two processes: `app` (login, SQLite, SSE) and `runner` (the CLI, inside the workspace jail). No frontend in this stage.
+Personal phone UI for running Cursor CLI headless. Three processes: `app` (login, SQLite, SSE, and the built PWA), `runner` (the CLI, inside the workspace jail), and `web` (the Vite source for that PWA).
 
 ## Layout
 
-- `apps/app` — Hono, Drizzle, libsql. Holds the password hash and session cookie. It never sees `CURSOR_API_KEY`.
+- `apps/app` — Hono, Drizzle, libsql. Holds the password hash and session cookie. It never sees `CURSOR_API_KEY`. When `WEB_ROOT` is set it also serves the built PWA on the same origin.
+- `apps/web` — React PWA. In development Vite proxies `/api` to the app. The production image builds it into `/app/web`.
 - `apps/runner` — Hono on the private network. Spawns `agent`, clones git repos, and checks workspace paths.
 - `docker-compose.yml` — project name `shirei`. Not started from this tree during development.
 
@@ -36,7 +37,7 @@ An app restart, or the app losing its HTTP connection to the runner, stops the C
 
 ## Local run without a Cursor key
 
-`apps/runner/scripts/fake-agent.mjs` prints the same NDJSON shapes as the CLI. A prompt containing `HANG` waits until SIGTERM. A prompt containing `FAIL` exits 1.
+`apps/runner/scripts/fake-agent.mjs` prints the same NDJSON shapes as the CLI, including the duplicate assistant flushes (one with `model_call_id`, one with no `timestamp_ms`). A prompt containing `HANG` starts a tool call and waits until SIGTERM. A prompt containing `FAIL` exits 1.
 
 ```bash
 npm install
@@ -44,22 +45,27 @@ npm test
 mkdir -p data/workspaces/hello data/app
 printf '%s\n' 'console.log("hi")' > data/workspaces/hello/hello.js
 
-# terminal A — runner
-HOST=127.0.0.1 PORT=8787 \
+# terminal A — runner. 8787 is often taken on this host; 8791 is a free stand-in.
+HOST=127.0.0.1 PORT=8791 \
   WORKSPACE_ROOT="$PWD/data/workspaces" \
   AGENT_BIN="$PWD/apps/runner/scripts/fake-agent.mjs" \
   RUNNER_TOKEN="$RUNNER_TOKEN" \
   npm run start -w apps/runner
 
-# terminal B — app. COOKIE_SECURE=false so curl over HTTP keeps the cookie.
+# terminal B — app. COOKIE_SECURE=false so a browser on http:// keeps the cookie.
 HOST=127.0.0.1 PORT=3099 COOKIE_SECURE=false \
   DATABASE_URL="file:$PWD/data/app/shirei.db" \
   SESSION_SECRET="$SESSION_SECRET" \
   AUTH_PASSWORD_HASH="$AUTH_PASSWORD_HASH" \
-  RUNNER_URL=http://127.0.0.1:8787 \
+  RUNNER_URL=http://127.0.0.1:8791 \
   RUNNER_TOKEN="$RUNNER_TOKEN" \
   npm run start -w apps/app
+
+# terminal C — phone UI, proxied to the app. SHIREI_WEB_PORT if 5173 is taken.
+npm run dev -w apps/web
 ```
+
+Open `http://127.0.0.1:5173`. The service worker is off in `vite dev`.
 
 ```bash
 curl -s -c /tmp/shirei.ck -H 'content-type: application/json' \
