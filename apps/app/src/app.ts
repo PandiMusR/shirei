@@ -271,15 +271,21 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
         if (aborted) return;
         void stream.write(': ping\n\n');
       }, 15_000);
+      const flush = async () => {
+        while (pending.length > 0) {
+          const event = pending.shift();
+          if (!event) break;
+          await send(event);
+          if (event.type === 'runner' && event.subtype === 'exit') return true;
+        }
+        return false;
+      };
       try {
         for (const row of await eventsAfter(db, task.id, startAfter)) await send(row);
+        if (await flush()) return;
+        if (!aborted) await stream.write(': live\n\n');
         while (!aborted) {
-          while (pending.length > 0) {
-            const event = pending.shift();
-            if (!event) break;
-            await send(event);
-            if (event.type === 'runner' && event.subtype === 'exit') return;
-          }
+          if (await flush()) return;
           const current = await getTask(db, task.id);
           if (!current || current.status !== 'running') return;
           await new Promise<void>((resolve) => {

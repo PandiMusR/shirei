@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { consumeSseBuffer, frameToEvent } from './sse';
+import { consumeSseBuffer, frameToEvent, labelStream } from './sse';
 
 describe('sse frames', () => {
   it('parses a frame split across chunks and ignores pings', () => {
@@ -16,5 +16,18 @@ describe('sse frames', () => {
       type: 'assistant',
       payload: { type: 'assistant' },
     });
+  });
+
+  it('tags events before : live as replay and the rest as live', () => {
+    const raw = ': open\n\nid: 1\nevent: system\ndata: {}\n\n: ping\n\n: live\n\nid: 2\nevent: assistant\ndata: {"type":"assistant"}\n\n';
+    const consumed = consumeSseBuffer(raw);
+    const comments = consumed.pieces.flatMap((piece) => (piece.kind === 'comment' ? [piece.text] : []));
+    expect(comments).toEqual(['open', 'ping', 'live']);
+    const labeled = labelStream(consumed.pieces);
+    expect(labeled.phase).toBe('live');
+    expect(labeled.events.map((item) => ({ seq: item.event.seq, type: item.event.type, phase: item.phase }))).toEqual([
+      { seq: 1, type: 'system', phase: 'replay' },
+      { seq: 2, type: 'assistant', phase: 'live' },
+    ]);
   });
 });

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { useLocation, useNavigate, useParams } from 'react-router';
 import { api, ApiError, explain, type Task } from '../api';
 import { useAuth } from '../App';
 import { Header } from '../components/Header';
 import { StatusChip } from '../components/StatusChip';
 import { TimelineView } from '../components/TimelineView';
+import { syncDebugFlag } from '../debug';
 import { readEventStream } from '../sse';
 import { clipLine, formatElapsed } from '../time';
 import {
@@ -27,7 +28,7 @@ function clock(date = new Date()): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
-type Arrival = { seq: number; type: string; offset: number; gap: number; clock: string };
+type Arrival = { seq: number; type: string; offset: number; gap: number; clock: string; phase: 'replay' | 'live' | 'open' };
 
 type PriorTurn = { task: Task; timeline: TimelineState };
 
@@ -65,20 +66,23 @@ function AgentStatus({ startedAt, ready, model }: { startedAt: number | null; re
 }
 
 function DebugOverlay({ rows }: { rows: Arrival[] }) {
-  const first = rows.find((row) => row.type !== 'open');
-  const last = rows.length > 0 ? rows[rows.length - 1] : undefined;
+  const events = rows.filter((row) => row.phase !== 'open');
+  const first = events[0];
+  const last = events.length > 0 ? events[events.length - 1] : undefined;
   const span = first && last ? last.offset - first.offset : 0;
-  const maxGap = rows.reduce((max, row) => Math.max(max, row.gap), 0);
+  const maxGap = events.reduce((max, row) => Math.max(max, row.gap), 0);
+  const replay = events.filter((row) => row.phase === 'replay').length;
+  const live = events.filter((row) => row.phase === 'live').length;
   return (
     <aside className="debug" aria-label="Stream debug">
       <p>
-        {rows.filter((row) => row.type !== 'open').length} events · span {span}ms · max gap {maxGap}ms
+        {events.length} events · {replay} replay · {live} live · span {span}ms · max gap {maxGap}ms
       </p>
       <ol>
         {rows.map((row, index) => (
           <li key={`${row.clock}-${row.seq}-${index}`}>
             {row.clock} +{row.offset}ms Δ{row.gap}ms {row.type}
-            {row.type === 'open' ? '' : ` #${row.seq}`}
+            {row.phase === 'open' ? '' : ` #${row.seq} ${row.phase}`}
           </li>
         ))}
       </ol>
@@ -88,8 +92,8 @@ function DebugOverlay({ rows }: { rows: Arrival[] }) {
 
 export function TaskScreen() {
   const { id = '' } = useParams();
-  const [params] = useSearchParams();
-  const debug = params.get('debug') === '1';
+  const { search } = useLocation();
+  const [debug, setDebug] = useState(() => syncDebugFlag(search));
   const navigate = useNavigate();
   const { setState } = useAuth();
   const [task, setTask] = useState<Task | null>(null);
@@ -107,6 +111,10 @@ export function TaskScreen() {
   const stick = useRef(true);
 
   useEffect(() => {
+    setDebug(syncDebugFlag(search));
+  }, [search]);
+
+  useEffect(() => {
     let stopped = false;
     let ended = false;
     let running = false;
@@ -115,7 +123,7 @@ export function TaskScreen() {
     const origin = { t: 0 };
     let previous = 0;
 
-    function note(seq: number, type: string) {
+    function note(seq: number, type: string, phase: Arrival['phase']) {
       if (!debug) return;
       const at = performance.now();
       if (origin.t === 0) {
@@ -125,7 +133,7 @@ export function TaskScreen() {
       const offset = Math.round(at - origin.t);
       const gap = Math.round(at - previous);
       previous = at;
-      setArrivals((rows) => [...rows, { seq, type, offset, gap, clock: clock() }]);
+      setArrivals((rows) => [...rows, { seq, type, offset, gap, clock: clock(), phase }]);
     }
 
     async function refresh() {
@@ -144,10 +152,10 @@ export function TaskScreen() {
       running = true;
       const ac = new AbortController();
       ctrl = ac;
-      note(0, 'open');
+      note(0, 'open', 'open');
       try {
-        await readEventStream(`/api/tasks/${id}/stream?after=${last.seq}`, ac.signal, (event) => {
-          note(event.seq, event.type);
+        await readEventStream(`/api/tasks/${id}/stream?after=${last.seq}`, ac.signal, (event, phase) => {
+          note(event.seq, event.type, phase);
           if (event.seq > last.seq) last.seq = event.seq;
           const init = systemInit(event);
           if (init) setAgent({ ready: true, model: init.model });

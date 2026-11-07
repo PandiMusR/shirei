@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { api, ApiError } from './api';
+import { syncDebugFlag } from './debug';
 import { Boot } from './components/Header';
 import { Home } from './screens/Home';
 import { Login } from './screens/Login';
@@ -44,10 +45,19 @@ function Gate({ children }: { children: ReactNode }) {
   return children;
 }
 
+function DebugSync() {
+  const { search } = useLocation();
+  useEffect(() => {
+    syncDebugFlag(search);
+  }, [search]);
+  return null;
+}
+
 export function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <DebugSync />
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
