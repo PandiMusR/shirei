@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { api, ApiError } from './api';
 import { syncDebugFlag } from './debug';
 import { Boot } from './components/Header';
+import { UpdateBanner } from './components/UpdateBanner';
 import { Home } from './screens/Home';
 import { Login } from './screens/Login';
 import { NewTask } from './screens/NewTask';
@@ -58,6 +59,7 @@ export function App() {
     <AuthProvider>
       <BrowserRouter>
         <DebugSync />
+        <UpdateBanner />
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
