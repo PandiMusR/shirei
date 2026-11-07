@@ -143,6 +143,30 @@ describe('duplicate assistant flushes', () => {
     }
   });
 
+  it('keeps a tool start time after the call completes', () => {
+    let state = reduceTimeline(emptyTimeline(), {
+      seq: 1,
+      type: 'tool_call',
+      payload: {
+        subtype: 'started',
+        call_id: 'c',
+        timestamp_ms: 1_000,
+        tool_call: { shellToolCall: { args: { command: 'ls' } } },
+      },
+    });
+    state = reduceTimeline(state, {
+      seq: 2,
+      type: 'tool_call',
+      payload: {
+        subtype: 'completed',
+        call_id: 'c',
+        timestamp_ms: 5_000,
+        tool_call: { shellToolCall: { args: { command: 'ls' }, result: { success: {} } } },
+      },
+    });
+    expect(state.items.find((item) => item.kind === 'tool')).toMatchObject({ state: 'ok', startedAt: 1_000 });
+  });
+
   it('does not add a second user bubble for the same prompt', () => {
     let state = reduceTimeline(emptyTimeline(), {
       seq: 0,

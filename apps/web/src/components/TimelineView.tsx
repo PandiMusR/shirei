@@ -1,6 +1,18 @@
-import { useState } from 'react';
-import { formatDuration } from '../time';
+import { useEffect, useRef, useState } from 'react';
+import { formatDuration, formatElapsed } from '../time';
 import { joinedAssistantText, type TimelineItem, type TimelineState } from '../timeline';
+import { Markdown } from './Markdown';
+
+function Elapsed({ startedAt }: { startedAt: number | null }) {
+  const fallback = useRef(Date.now());
+  const origin = startedAt ?? fallback.current;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return <span className="tool-elapsed">{formatElapsed(now - origin)}</span>;
+}
 
 function ToolCard({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
   const [open, setOpen] = useState(false);
@@ -9,6 +21,7 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
       <button type="button" className="tool-btn" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <span className={item.state === 'running' ? 'spinner' : `mark mark-${item.state}`} aria-hidden="true" />
         <span className="tool-label">{item.label}</span>
+        {item.state === 'running' ? <Elapsed startedAt={item.startedAt} /> : null}
       </button>
       {open ? <pre className="tool-detail">{item.detail}</pre> : null}
     </li>
@@ -45,7 +58,7 @@ export function TimelineView({
         if (item.kind === 'assistant') {
           return (
             <li key={`assistant-${item.seq}`} className="bubble assistant">
-              {item.text}
+              <Markdown text={item.text} />
             </li>
           );
         }

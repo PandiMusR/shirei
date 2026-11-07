@@ -12,7 +12,7 @@ export function Header({
 }) {
   const navigate = useNavigate();
   return (
-    <header className="top">
+    <header className={onLogout ? 'top' : 'top no-logout'}>
       {back ? (
         <button
           type="button"
@@ -35,9 +35,7 @@ export function Header({
         <button type="button" className="text-btn" onClick={onLogout}>
           Log out
         </button>
-      ) : (
-        <span className="top-spacer" />
-      )}
+      ) : null}
     </header>
   );
 }

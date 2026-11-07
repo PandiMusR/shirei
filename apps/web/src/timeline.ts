@@ -10,7 +10,7 @@ export type TimelineItem =
   | { kind: 'user'; seq: number; text: string }
   | { kind: 'assistant'; seq: number; text: string }
   | { kind: 'thinking'; seq: number; text: string; done: boolean }
-  | { kind: 'tool'; seq: number; callId: string; label: string; state: ToolState; detail: string }
+  | { kind: 'tool'; seq: number; callId: string; label: string; state: ToolState; detail: string; startedAt: number | null }
   | { kind: 'result'; seq: number; text: string; durationMs: number | null; isError: boolean }
   | { kind: 'raw'; seq: number; type: string; text: string };
 
@@ -101,6 +101,11 @@ function toolState(payload: unknown, completed: boolean): ToolState {
   return 'ok';
 }
 
+function eventTime(payload: unknown): number | null {
+  if (!isRecord(payload) || typeof payload.timestamp_ms !== 'number' || !Number.isFinite(payload.timestamp_ms)) return null;
+  return payload.timestamp_ms;
+}
+
 function callIdOf(payload: unknown): string {
   if (isRecord(payload) && typeof payload.call_id === 'string' && payload.call_id.length > 0) return payload.call_id;
   const found = toolEntry(payload);
@@ -178,12 +183,15 @@ export function reduceTimeline(state: TimelineState, event: TimelineEvent): Time
       label: toolLabel(payload),
       state: toolState(payload, completed),
       detail: detailOf(payload),
+      startedAt: eventTime(payload),
     };
     const index = state.items.findIndex((item) => item.kind === 'tool' && item.callId === id);
     if (index >= 0) {
       const items = state.items.slice();
       const prev = items[index];
-      if (prev && prev.kind === 'tool') items[index] = { ...next, seq: prev.seq };
+      if (prev && prev.kind === 'tool') {
+        items[index] = { ...next, seq: prev.seq, startedAt: prev.startedAt ?? next.startedAt };
+      }
       return withSeen(state, event.seq, items);
     }
     return withSeen(state, event.seq, [...state.items, next]);

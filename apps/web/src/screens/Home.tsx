@@ -4,7 +4,7 @@ import { api, explain, type Project, type Task } from '../api';
 import { useAuth } from '../App';
 import { Header } from '../components/Header';
 import { Sheet } from '../components/Sheet';
-import { StatusChip } from '../components/StatusChip';
+import { StatusChip, statusLabel } from '../components/StatusChip';
 import { clipLine, formatAgo } from '../time';
 
 export function Home() {
@@ -38,8 +38,8 @@ export function Home() {
     };
   }, []);
 
-  function lastStatus(projectId: string): string | null {
-    return tasks.find((task) => task.projectId === projectId)?.status ?? null;
+  function lastTask(projectId: string): Task | undefined {
+    return tasks.find((task) => task.projectId === projectId);
   }
 
   async function logout() {
@@ -85,7 +85,7 @@ export function Home() {
           {projects.length === 0 ? <p className="quiet">Add a folder on this machine, or a GitHub repo.</p> : null}
           <ul className="list">
             {projects.map((project) => {
-              const status = lastStatus(project.id);
+              const last = lastTask(project.id);
               return (
                 <li key={project.id} className="row">
                   <div>
@@ -93,13 +93,15 @@ export function Home() {
                     <p className="quiet">
                       <span className="badge">{project.source}</span> {project.path}
                     </p>
+                    {last ? (
+                      <p className="quiet last-line">
+                        last: {statusLabel(last.status)} · {formatAgo(last.endedAt ?? last.startedAt ?? last.createdAt)}
+                      </p>
+                    ) : null}
                   </div>
-                  <div className="row-side">
-                    {status ? <StatusChip status={status} /> : null}
-                    <button type="button" className="primary slim" onClick={() => navigate(`/tasks/new?project=${project.id}`)}>
-                      New task
-                    </button>
-                  </div>
+                  <button type="button" className="primary slim" onClick={() => navigate(`/tasks/new?project=${project.id}`)}>
+                    New task
+                  </button>
                 </li>
               );
             })}

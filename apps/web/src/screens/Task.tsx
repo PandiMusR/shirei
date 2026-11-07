@@ -6,7 +6,6 @@ import { Header } from '../components/Header';
 import { StatusChip } from '../components/StatusChip';
 import { TimelineView } from '../components/TimelineView';
 import { readEventStream } from '../sse';
-import { clipLine } from '../time';
 import { emptyTimeline, promptEvent, reduceTimeline, type TimelineState } from '../timeline';
 
 function sleep(ms: number): Promise<void> {
@@ -120,12 +119,6 @@ export function TaskScreen() {
     el.scrollTop = el.scrollHeight;
   }, [timeline]);
 
-  async function logout() {
-    await api.logout().catch(() => undefined);
-    setState('out');
-    navigate('/login', { replace: true });
-  }
-
   async function stop() {
     setPending(true);
     setError('');
@@ -164,7 +157,7 @@ export function TaskScreen() {
 
   return (
     <main className="screen">
-      <Header title={task ? clipLine(task.prompt, 28) : 'Task'} back onLogout={() => void logout()} />
+      <Header title={task ? task.prompt.replace(/\s+/g, ' ').trim() : 'Task'} back />
       {task ? (
         <div className="task-meta">
           <StatusChip status={task.status} />

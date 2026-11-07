@@ -1,14 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { api, explain, type Project } from '../api';
-import { useAuth } from '../App';
 import { Header } from '../components/Header';
 
 const modes = ['agent', 'ask', 'plan'] as const;
 
 export function NewTask() {
   const navigate = useNavigate();
-  const { setState } = useAuth();
   const [params] = useSearchParams();
   const preset = params.get('project');
   const [projects, setProjects] = useState<Project[]>([]);
@@ -38,12 +36,6 @@ export function NewTask() {
     };
   }, [preset]);
 
-  async function logout() {
-    await api.logout().catch(() => undefined);
-    setState('out');
-    navigate('/login', { replace: true });
-  }
-
   function grow(event: FormEvent<HTMLTextAreaElement>) {
     const el = event.currentTarget;
     el.style.height = 'auto';
@@ -72,7 +64,7 @@ export function NewTask() {
 
   return (
     <main className="screen">
-      <Header title="New task" back onLogout={() => void logout()} />
+      <Header title="New task" back />
       <form className="scroll stack" onSubmit={(event) => void submit(event)}>
         {projects.length === 0 ? <p className="quiet">Add a project on the home screen first.</p> : null}
         <label htmlFor="task-project">Project</label>

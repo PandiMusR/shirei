@@ -73,15 +73,18 @@ button { cursor: pointer; }
 
 .top {
   display: grid;
-  grid-template-columns: 44px 1fr auto;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
   border-bottom: 3px solid var(--seal);
 }
 
+.top.no-logout { grid-template-columns: 44px minmax(0, 1fr); }
+
 .top h1 {
   margin: 0;
+  min-width: 0;
   font-family: var(--font-display);
   font-size: 1.35rem;
   font-weight: 600;
@@ -196,6 +199,7 @@ textarea { resize: none; min-height: 120px; max-height: 40vh; line-height: 1.45;
   justify-content: space-between;
   gap: 10px;
 }
+.row { align-items: flex-start; }
 
 .section-head h2, .scroll h2 {
   font-family: var(--font-display);
@@ -205,6 +209,8 @@ textarea { resize: none; min-height: 120px; max-height: 40vh; line-height: 1.45;
 }
 
 .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+
+.last-line { margin-top: 4px; font-size: 0.85rem; }
 
 .row, .task-link {
   width: 100%;
@@ -279,18 +285,43 @@ textarea { resize: none; min-height: 120px; max-height: 40vh; line-height: 1.45;
 }
 
 .thread { list-style: none; margin: 0; padding: 0 0 12px; display: flex; flex-direction: column; gap: 12px; }
-.bubble { padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble { padding: 12px 14px; overflow-wrap: anywhere; }
 .bubble.user {
   margin-left: 14%;
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 18px 18px 6px 18px;
+  white-space: pre-wrap;
 }
 .bubble.assistant {
   margin-right: 6%;
-  font-family: var(--font-display);
-  font-size: 1.08rem;
+  font-family: var(--font-ui);
+  font-size: 1rem;
   line-height: 1.45;
+}
+.md p { margin: 0 0 0.65em; white-space: pre-wrap; }
+.md p:last-child, .md ul:last-child, .md ol:last-child, .md pre:last-child { margin-bottom: 0; }
+.md ul, .md ol { margin: 0.4em 0 0.65em; padding-left: 1.2em; }
+.md li { margin: 0.15em 0; }
+.md-inline {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0.05em 0.35em;
+  border-radius: 6px;
+  background: var(--paper);
+}
+.md-pre {
+  overflow-x: auto;
+  margin: 0.5em 0 0.65em;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+.md-pre code {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  white-space: pre;
 }
 .card {
   background: var(--raised);
@@ -309,6 +340,13 @@ textarea { resize: none; min-height: 120px; max-height: 40vh; line-height: 1.45;
   text-align: left;
 }
 .tool-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-elapsed {
+  margin-left: auto;
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+}
 .tool-detail {
   margin: 0;
   padding: 0 12px 12px;
