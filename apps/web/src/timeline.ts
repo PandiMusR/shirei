@@ -113,6 +113,10 @@ function toolEntry(payload: unknown): { key: string; body: Record<string, unknow
 
 const OUTPUT_LINES = 50;
 
+export function shellHasOutput(stdout: string, stderr: string): boolean {
+  return stdout.trim().length > 0 || stderr.trim().length > 0;
+}
+
 export function lastLines(text: string, max = OUTPUT_LINES): { text: string; hidden: number } {
   if (!text) return { text: '', hidden: 0 };
   const lines = text.split('\n');

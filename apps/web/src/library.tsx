@@ -1,10 +1,11 @@
-import { createContext, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useLocation, useMatch, useNavigate } from 'react-router';
 import { api, explain, type Project, type Task } from './api';
 import { useAuth } from './App';
 import { Header } from './components/Header';
 import { Sheet } from './components/Sheet';
 import { StatusChip, statusLabel } from './components/StatusChip';
+import { LIST_POLL_MS, patchTaskList, taskListNeedsPoll } from './taskList';
 import { clipLine, formatAgo } from './time';
 
 type LibraryValue = {
@@ -13,6 +14,7 @@ type LibraryValue = {
   ready: boolean;
   error: string;
   reload: () => Promise<void>;
+  noteTask: (task: Task) => void;
 };
 
 const LibraryContext = createContext<LibraryValue | null>(null);
@@ -23,12 +25,23 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
+  const ticket = useRef(0);
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
 
-  async function reload() {
+  const reload = useCallback(async () => {
+    const mine = ++ticket.current;
     const [projectBody, taskBody] = await Promise.all([api.projects(), api.tasks()]);
+    if (mine !== ticket.current) return;
     setProjects(projectBody.projects);
     setTasks(taskBody.tasks);
-  }
+  }, []);
+
+  const noteTask = useCallback((next: Task) => {
+    if (!tasksRef.current.some((task) => task.id === next.id)) return;
+    ticket.current += 1;
+    setTasks((current) => patchTaskList(current, next));
+  }, []);
 
   useEffect(() => {
     let cancel = false;
@@ -42,14 +55,30 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     return () => {
       cancel = true;
     };
-    // Refetch when the route changes so Recent includes a task that was just created.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.pathname]);
+  }, [location.pathname, reload]);
 
-  return <LibraryContext.Provider value={{ projects, tasks, ready, error, reload }}>{children}</LibraryContext.Provider>;
+  useEffect(() => {
+    function onFocus() {
+      void reload().catch(() => undefined);
+    }
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [reload]);
+
+  useEffect(() => {
+    if (!taskListNeedsPoll(tasks)) return;
+    const id = window.setInterval(() => {
+      void reload().catch(() => undefined);
+    }, LIST_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [tasks, reload]);
+
+  return (
+    <LibraryContext.Provider value={{ projects, tasks, ready, error, reload, noteTask }}>{children}</LibraryContext.Provider>
+  );
 }
 
-function useLibrary(): LibraryValue {
+export function useLibrary(): LibraryValue {
   const value = useContext(LibraryContext);
   if (!value) throw new Error('Library is missing');
   return value;

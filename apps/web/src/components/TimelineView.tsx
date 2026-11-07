@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatDuration, formatElapsed } from '../time';
-import { filesChanged, joinedAssistantText, type TimelineItem, type TimelineState, type ToolView } from '../timeline';
+import { filesChanged, joinedAssistantText, shellHasOutput, type TimelineItem, type TimelineState, type ToolView } from '../timeline';
 import { Markdown } from './Markdown';
 
 function Elapsed({ startedAt }: { startedAt: number | null }) {
@@ -43,7 +43,7 @@ function ShellBadge({ view, running }: { view: Extract<ToolView, { kind: 'shell'
 }
 
 function ShellBody({ view }: { view: Extract<ToolView, { kind: 'shell' }> }) {
-  if (!view.stdout && !view.stderr) return null;
+  if (!shellHasOutput(view.stdout, view.stderr)) return null;
   return (
     <details className="tool-fold">
       <summary>Output</summary>

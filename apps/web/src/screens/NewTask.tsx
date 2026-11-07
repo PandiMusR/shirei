@@ -11,13 +11,32 @@ import {
   matchChoice,
   nearestEffort,
   optionFor,
+  readModelsCache,
   resolveChoice,
+  writeModelsCache,
   type Effort,
   type ModelChoice,
   type ModelGroup,
 } from '../models';
 
 const modes = ['agent', 'ask', 'plan'] as const;
+
+function cachedGroups(): ModelGroup[] | null {
+  try {
+    return readModelsCache(window.sessionStorage);
+  } catch {
+    return null;
+  }
+}
+
+function choiceFromGroups(groups: ModelGroup[]): ModelChoice {
+  const saved = window.localStorage.getItem('shirei.model');
+  const restored = saved ? matchChoice(groups, saved) : null;
+  const first = groups[0]?.families[0];
+  if (restored) return restored;
+  if (first) return choiceForFamily(first);
+  return { familyId: 'auto', effort: 'bare', thinking: false, fast: false };
+}
 
 export function NewTask() {
   const navigate = useNavigate();
@@ -27,8 +46,9 @@ export function NewTask() {
   const [projectId, setProjectId] = useState('');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<(typeof modes)[number]>('agent');
-  const [groups, setGroups] = useState<ModelGroup[]>([]);
-  const [choice, setChoice] = useState<ModelChoice>({ familyId: 'auto', effort: 'bare', thinking: false, fast: false });
+  const [groups, setGroups] = useState<ModelGroup[]>(() => cachedGroups() ?? []);
+  const [modelsReady, setModelsReady] = useState(() => (cachedGroups()?.length ?? 0) > 0);
+  const [choice, setChoice] = useState<ModelChoice>(() => choiceFromGroups(cachedGroups() ?? []));
   const [force, setForce] = useState(false);
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
@@ -61,15 +81,19 @@ export function NewTask() {
       .models()
       .then((body) => {
         if (cancel) return;
+        try {
+          writeModelsCache(window.sessionStorage, body.groups);
+        } catch {
+          // The form already holds the response.
+        }
         setGroups(body.groups);
-        const saved = window.localStorage.getItem('shirei.model');
-        const restored = saved ? matchChoice(body.groups, saved) : null;
-        const first = body.groups[0]?.families[0];
-        if (restored) setChoice(restored);
-        else if (first) setChoice(choiceForFamily(first));
+        setModelsReady(true);
+        setChoice((current) => (resolveChoice(body.groups, current) ? current : choiceFromGroups(body.groups)));
       })
       .catch((err) => {
-        if (!cancel) setError(explain(err));
+        if (cancel) return;
+        setModelsReady(true);
+        setError(explain(err));
       });
     return () => {
       cancel = true;
@@ -156,65 +180,77 @@ export function NewTask() {
             </button>
           ))}
         </div>
-        <label htmlFor="task-model">Model</label>
-        <select
-          id="task-model"
-          value={choice.familyId}
-          onChange={(event) => {
-            const next = findFamily(groups, event.target.value);
-            if (next) setChoice(choiceForFamily(next));
-          }}
-        >
-          {groups.map((group) => (
-            <optgroup key={group.name} label={group.name}>
-              {group.families.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-        {showEffort ? (
+        {modelsReady && groups.length > 0 ? (
           <>
-            <label htmlFor="task-effort">Effort</label>
+            <label htmlFor="task-model">Model</label>
             <select
-              id="task-effort"
-              value={choice.effort}
+              id="task-model"
+              value={choice.familyId}
               onChange={(event) => {
-                const effort = event.target.value as Effort;
-                const next = family ? optionFor(family, effort, choice.thinking) : undefined;
-                setChoice({ ...choice, effort, fast: choice.fast && Boolean(next?.fastId) });
+                const next = findFamily(groups, event.target.value);
+                if (next) setChoice(choiceForFamily(next));
               }}
             >
-              {effortChoices.map((effort) => (
-                <option key={effort} value={effort}>
-                  {EFFORT_LABEL[effort]}
-                </option>
+              {groups.map((group) => (
+                <optgroup key={group.name} label={group.name}>
+                  {group.families.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
+            {showEffort ? (
+              <>
+                <label htmlFor="task-effort">Effort</label>
+                <select
+                  id="task-effort"
+                  value={choice.effort}
+                  onChange={(event) => {
+                    const effort = event.target.value as Effort;
+                    const next = family ? optionFor(family, effort, choice.thinking) : undefined;
+                    setChoice({ ...choice, effort, fast: choice.fast && Boolean(next?.fastId) });
+                  }}
+                >
+                  {effortChoices.map((effort) => (
+                    <option key={effort} value={effort}>
+                      {EFFORT_LABEL[effort]}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : null}
+            {thinkingChoices && family ? (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={choice.thinking}
+                  onChange={(event) => {
+                    const thinking = event.target.checked;
+                    const effort = nearestEffort(choice.effort, effortsFor(family, thinking));
+                    const next = optionFor(family, effort, thinking);
+                    setChoice({ ...choice, thinking, effort, fast: choice.fast && Boolean(next?.fastId) });
+                  }}
+                />
+                <span>Thinking</span>
+              </label>
+            ) : null}
+            {option?.fastId ? (
+              <label className="check">
+                <input type="checkbox" checked={choice.fast} onChange={(event) => setChoice({ ...choice, fast: event.target.checked })} />
+                <span>Fast</span>
+              </label>
+            ) : null}
+            <p className="quiet choice-id">{composed}</p>
           </>
         ) : null}
-        {thinkingChoices && family ? (
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={choice.thinking}
-              onChange={(event) => {
-                const thinking = event.target.checked;
-                const effort = nearestEffort(choice.effort, effortsFor(family, thinking));
-                const next = optionFor(family, effort, thinking);
-                setChoice({ ...choice, thinking, effort, fast: choice.fast && Boolean(next?.fastId) });
-              }}
-            />
-            <span>Thinking</span>
-          </label>
-        ) : null}
-        {option?.fastId ? (
-          <label className="check">
-            <input type="checkbox" checked={choice.fast} onChange={(event) => setChoice({ ...choice, fast: event.target.checked })} />
-            <span>Fast</span>
-          </label>
+        {!modelsReady ? (
+          <div className="skeleton-stack" aria-hidden="true">
+            <div className="skeleton" />
+            <div className="skeleton short" />
+            <div className="skeleton short" />
+          </div>
         ) : null}
         {mode === 'agent' ? (
           <label className="check">
@@ -226,8 +262,7 @@ export function NewTask() {
           </label>
         ) : null}
         {error ? <p className="form-error">{error}</p> : null}
-        <p className="quiet choice-id">{composed}</p>
-        <button type="submit" className="primary" disabled={pending || !projectId || prompt.trim().length === 0}>
+        <button type="submit" className="primary" disabled={pending || !projectId || prompt.trim().length === 0 || !modelsReady}>
           {pending ? 'Starting…' : 'Start'}
         </button>
       </form>

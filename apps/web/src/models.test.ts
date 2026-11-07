@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { choiceForFamily, composedId, effortsFor, hasBothThinking, nearestEffort, optionFor, resolveChoice, type ModelFamily, type ModelGroup } from './models';
+import {
+  choiceForFamily,
+  composedId,
+  effortsFor,
+  hasBothThinking,
+  MODELS_CACHE_KEY,
+  nearestEffort,
+  optionFor,
+  readModelsCache,
+  resolveChoice,
+  writeModelsCache,
+  type ModelFamily,
+  type ModelGroup,
+} from './models';
 
 const opus: ModelFamily = {
   id: 'claude-opus-5',
@@ -40,5 +53,25 @@ describe('model choice', () => {
 
   it('starts a two-form family on a non-thinking level', () => {
     expect(choiceForFamily(opus)).toEqual({ familyId: 'claude-opus-5', effort: 'medium', thinking: false, fast: false });
+  });
+
+  it('round-trips the models catalog and ignores a bad cache', () => {
+    const values = new Map<string, string>();
+    const store = {
+      getItem(key: string) {
+        return values.get(key) ?? null;
+      },
+      setItem(key: string, value: string) {
+        values.set(key, value);
+      },
+    };
+    expect(readModelsCache(store)).toBeNull();
+    writeModelsCache(store, groups);
+    expect(store.getItem(MODELS_CACHE_KEY)).toContain('claude-opus-5');
+    expect(readModelsCache(store)).toEqual(groups);
+    store.setItem(MODELS_CACHE_KEY, '{');
+    expect(readModelsCache(store)).toBeNull();
+    store.setItem(MODELS_CACHE_KEY, JSON.stringify({ groups: [] }));
+    expect(readModelsCache(store)).toBeNull();
   });
 });
