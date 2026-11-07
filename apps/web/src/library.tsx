@@ -3,6 +3,7 @@ import { useLocation, useMatch, useNavigate } from 'react-router';
 import { api, explain, type Project, type Task } from './api';
 import { useAuth } from './App';
 import { Header } from './components/Header';
+import { NotifyToggle } from './components/NotifyToggle';
 import { Sheet } from './components/Sheet';
 import { StatusChip, statusLabel } from './components/StatusChip';
 import { LIST_POLL_MS, patchTaskList, taskListNeedsPoll } from './taskList';
@@ -263,6 +264,7 @@ export function ProjectLists({ variant }: { variant: 'page' | 'rail' }) {
         {error ? <p className="form-error">{error}</p> : null}
         {projectsSection}
         {recentSection}
+        <NotifyToggle />
         {sheetNode}
       </div>
     );
@@ -275,6 +277,7 @@ export function ProjectLists({ variant }: { variant: 'page' | 'rail' }) {
         {error ? <p className="form-error">{error}</p> : null}
         {projectsSection}
         {recentSection}
+        <NotifyToggle />
       </div>
       {sheetNode}
     </main>

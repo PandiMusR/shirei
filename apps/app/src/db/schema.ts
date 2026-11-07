@@ -49,10 +49,9 @@ export const events = sqliteTable(
   (table) => [primaryKey({ columns: [table.taskId, table.seq] })],
 );
 
-/** Placeholder for stage 4. No routes write this table yet. */
 export const pushSubscriptions = sqliteTable('push_subscriptions', {
   id: text('id').primaryKey(),
-  endpoint: text('endpoint').notNull(),
+  endpoint: text('endpoint').notNull().unique(),
   p256dh: text('p256dh').notNull(),
   auth: text('auth').notNull(),
   createdAt: integer('created_at').notNull(),

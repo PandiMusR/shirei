@@ -10,6 +10,7 @@ import { endSession, resolveSession, startSession } from './auth/sessions';
 import type { Database } from './db/client';
 import type { Task } from './db/schema';
 import type { Env } from './env';
+import { buildTestPush, createWebPushSender, deleteSubscription, deliverPush, notifyTask, saveSubscription } from './push';
 import { cloneProject, fetchModels, RunnerRequestError, statPath, type RunnerClient } from './runnerClient';
 import {
   beginShutdown,
@@ -23,6 +24,7 @@ import {
   requestStop,
   RunnerBusyError,
   sessionTurns,
+  setTaskFinishedHook,
   startTask,
   subscribe,
 } from './tasks';
@@ -45,6 +47,14 @@ const taskBody = z.object({
 });
 
 const RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._][A-Za-z0-9._/-]{0,200}$/;
+const subscribeBody = z.object({
+  endpoint: z.string().url().max(2000),
+  keys: z.object({
+    p256dh: z.string().min(1).max(200),
+    auth: z.string().min(1).max(200),
+  }),
+});
+const endpointBody = z.object({ endpoint: z.string().url().max(2000) });
 
 function parsePayload(raw: string): unknown {
   try {
@@ -86,6 +96,8 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
   const { env, db } = opts;
   const now = opts.now ?? Date.now;
   const runner: RunnerClient = { url: env.RUNNER_URL.replace(/\/$/, ''), token: env.RUNNER_TOKEN };
+  const sendPush = createWebPushSender(env);
+  setTaskFinishedHook((taskId) => notifyTask(db, sendPush, taskId));
   const loginLimit = createRateLimiter({ limit: 5, windowMs: 15 * 60 * 1000, now });
   const app = new Hono();
   if (env.webRoot) {
@@ -297,6 +309,24 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
         unsub();
       }
     });
+  });
+
+  authed.get('/push/key', (c) => c.json({ publicKey: env.VAPID_PUBLIC_KEY }));
+  authed.post('/push/subscribe', async (c) => {
+    const parsed = subscribeBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'invalid_body' }, 400);
+    await saveSubscription(db, parsed.data, now());
+    return c.json({ ok: true });
+  });
+  authed.delete('/push/subscribe', async (c) => {
+    const parsed = endpointBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'invalid_body' }, 400);
+    await deleteSubscription(db, parsed.data.endpoint);
+    return c.json({ ok: true });
+  });
+  authed.post('/push/test', async (c) => {
+    await deliverPush(db, buildTestPush(), sendPush);
+    return c.json({ ok: true });
   });
 
   api.route('/', authed);
