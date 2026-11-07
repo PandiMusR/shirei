@@ -18,6 +18,10 @@ ENV NODE_ENV=production \
     MIGRATIONS_DIR=/app/drizzle \
     WEB_ROOT=/app/web
 WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/app/package.json apps/app/package.json
+RUN npm ci --omit=dev -w apps/app --include-workspace-root=false \
+ && npm cache clean --force
 COPY --from=build /src/apps/app/dist ./dist
 COPY --from=build /src/apps/web/dist ./web
 COPY apps/app/drizzle ./drizzle
