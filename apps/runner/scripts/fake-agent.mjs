@@ -36,37 +36,78 @@ emit({
   ...base(),
 });
 
+function assistantMessage(text) {
+  return { role: 'assistant', content: [{ type: 'text', text }] };
+}
+
+/** Deltas, then the two real-CLI flushes that repeat the full turn and must not be appended. */
+function emitAssistant(chunks) {
+  let full = '';
+  for (const chunk of chunks) {
+    full += chunk;
+    emit({ type: 'assistant', message: assistantMessage(chunk), timestamp_ms: Date.now(), ...base() });
+  }
+  emit({
+    type: 'assistant',
+    message: assistantMessage(full),
+    timestamp_ms: Date.now(),
+    model_call_id: 'fake-flush',
+    ...base(),
+  });
+  emit({ type: 'assistant', message: assistantMessage(full), ...base() });
+  return full;
+}
+
+function emitRead(subtype, result) {
+  emit({
+    type: 'tool_call',
+    subtype,
+    call_id: 'fake-1',
+    tool_call: { readToolCall: { args: { path: 'README.md' }, ...(result ? { result } : {}) } },
+    ...base(),
+  });
+}
+
 if (prompt.includes('HANG')) {
+  emit({
+    type: 'tool_call',
+    subtype: 'started',
+    call_id: 'fake-hang',
+    tool_call: { shellToolCall: { args: { command: 'sleep infinity' } } },
+    timestamp_ms: Date.now(),
+    ...base(),
+  });
   process.on('SIGTERM', () => {
+    emit({
+      type: 'tool_call',
+      subtype: 'completed',
+      call_id: 'fake-hang',
+      tool_call: {
+        shellToolCall: { args: { command: 'sleep infinity' }, result: { failure: { exitCode: 143 } } },
+      },
+      ...base(),
+    });
     emit({ type: 'result', subtype: 'success', is_error: true, duration_ms: 1, result: 'stopped', ...base() });
     process.exit(0);
   });
   setInterval(() => {}, 1 << 30);
 } else if (prompt.includes('FAIL')) {
-  emit({ type: 'result', subtype: 'error', is_error: true, duration_ms: 5, result: 'fake failure', ...base() });
+  const answer = 'fake failure';
+  emitAssistant([answer.slice(0, 5), answer.slice(5)]);
+  emit({ type: 'result', subtype: 'error', is_error: true, duration_ms: 5, result: answer, ...base() });
   process.exit(1);
 } else {
-  emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'fake ' }] }, timestamp_ms: Date.now(), ...base() });
-  emit({
-    type: 'tool_call',
-    subtype: 'started',
-    call_id: 'fake-1',
-    tool_call: { readToolCall: { args: { path: 'README.md' } } },
-    ...base(),
-  });
-  emit({
-    type: 'tool_call',
-    subtype: 'completed',
-    call_id: 'fake-1',
-    tool_call: { readToolCall: { args: { path: 'README.md' }, result: { success: { totalLines: 1 } } } },
-    ...base(),
-  });
+  emitRead('started');
+  emitRead('completed', { success: { totalLines: 1 } });
+  const answer = `fake answer: ${prompt}`;
+  const mid = Math.max(1, Math.floor(answer.length / 2));
+  emitAssistant([answer.slice(0, mid), answer.slice(mid)]);
   emit({
     type: 'result',
     subtype: 'success',
     is_error: false,
     duration_ms: 12,
-    result: `fake answer: ${prompt}`,
+    result: answer,
     ...base(),
   });
   process.exit(0);

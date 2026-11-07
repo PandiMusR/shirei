@@ -1,0 +1,12 @@
+{"type":"system","subtype":"init","apiKeySource":"env","cwd":"/workspace/hello","session_id":"874d8a43-11e7-420c-afec-91b19c8499bf","model":"Auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"In one sentence, what did you tell me greet does?"}]},"session_id":"874d8a43-11e7-420c-afec-91b19c8499bf"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I told you that `greet`"}]},"session_id":"874d8a43-11e7-420c-afec-91b19c8499bf","timestamp_ms":1794009116196}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" takes a `name` arg"}]},"session_id":"874d8a43-11e7-420c-afec-91b19c8499bf","timestamp_ms":1794009116306}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ument and returns `\"H"}]},"session_id":"874d8a43-11e7-420c-afec-91b19c8499bf","timestamp_ms":1794009116307}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ello, \"` followed by that"}]},"session_id":"874d8a43-11e7-420c-afec-91b19c8499bf","timestamp_ms":1794009116310}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" name, so"}]},"session_id":"874d8a43-11e7-420c-afec-91b19c8499bf","timestamp_ms":1794009116310}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" `greet(\"Ada\")"}]},"session_id":"874d8a43-11e7-420c-afec-91b19c8499bf","timestamp_ms":1794009116312}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"` returns `\"Hello"}]},"session_id":"874d8a43-11e7-420c-afec-91b19c8499bf","timestamp_ms":1794009116313}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":", Ada\"`."}]},"session_id":"874d8a43-11e7-420c-afec-91b19c8499bf","timestamp_ms":1794009116314}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I told you that `greet` takes a `name` argument and returns `\"Hello, \"` followed by that name, so `greet(\"Ada\")` returns `\"Hello, Ada\"`."}]},"session_id":"874d8a43-11e7-420c-afec-91b19c8499bf"}
+{"type":"result","subtype":"success","duration_ms":4671,"duration_api_ms":4671,"is_error":false,"result":"I told you that `greet` takes a `name` argument and returns `\"Hello, \"` followed by that name, so `greet(\"Ada\")` returns `\"Hello, Ada\"`.","session_id":"874d8a43-11e7-420c-afec-91b19c8499bf"}

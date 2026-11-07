@@ -58,6 +58,7 @@ services:
       MIGRATIONS_DIR: /app/drizzle
       RUNNER_URL: http://runner:8787
       COOKIE_SECURE: "true"
+      WEB_ROOT: /app/web
     ports:
       - "127.0.0.1:3070:3000"
     volumes:

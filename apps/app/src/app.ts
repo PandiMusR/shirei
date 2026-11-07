@@ -25,6 +25,7 @@ import {
   startTask,
   subscribe,
 } from './tasks';
+import { mountWeb } from './web';
 
 const loginBody = z.object({ password: z.string().min(1).max(256) });
 const projectBody = z.object({
@@ -78,6 +79,16 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
   const runner: RunnerClient = { url: env.RUNNER_URL.replace(/\/$/, ''), token: env.RUNNER_TOKEN };
   const loginLimit = createRateLimiter({ limit: 5, windowMs: 15 * 60 * 1000, now });
   const app = new Hono();
+  if (env.webRoot) {
+    app.use('*', async (c, next) => {
+      await next();
+      const pathname = c.req.path;
+      if (pathname.startsWith('/api') || pathname === '/healthz') return;
+      if (c.res.headers.has('Cache-Control')) return;
+      const hashed = pathname.startsWith('/assets/');
+      c.res.headers.set('Cache-Control', hashed ? 'public, max-age=31536000, immutable' : 'no-cache');
+    });
+  }
 
   app.onError((err, c) => {
     console.error(err.name);
@@ -251,6 +262,7 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
 
   api.route('/', authed);
   app.route('/api', api);
+  if (env.webRoot) mountWeb(app, env.webRoot);
   return app;
 }
 

@@ -150,17 +150,17 @@ async function consume(db: Database, taskId: string, lines: AsyncGenerator<Runne
         if (shuttingDown) return;
         const finished = finishStatus(line, isError);
         const endedAt = Date.now();
-        await appendEvent(db, taskId, {
-          type: 'runner',
-          subtype: 'exit',
-          payload: { code: line.code, signal: line.signal, timedOut: line.timedOut, stopped: line.stopped },
-        });
         const current = await getTask(db, taskId);
         const duration = durationMs ?? (current?.startedAt ? endedAt - current.startedAt : null);
         await db
           .update(tasks)
           .set({ status: finished.status, error: finished.error, endedAt, durationMs: duration })
           .where(eq(tasks.id, taskId));
+        await appendEvent(db, taskId, {
+          type: 'runner',
+          subtype: 'exit',
+          payload: { code: line.code, signal: line.signal, timedOut: line.timedOut, stopped: line.stopped },
+        });
         console.log(`task ${taskId} ${finished.status}`);
       }
     }

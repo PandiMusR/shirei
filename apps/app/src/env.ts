@@ -23,8 +23,13 @@ const schema = z
       }, 'must be an http(s) URL')
       .default('http://127.0.0.1:8787'),
     RUNNER_TOKEN: z.string().min(16),
+    WEB_ROOT: z.string().min(1).optional(),
   })
-  .transform((value) => ({ ...value, cookieSecure: value.COOKIE_SECURE === 'true' }));
+  .transform((value) => ({
+    ...value,
+    cookieSecure: value.COOKIE_SECURE === 'true',
+    webRoot: value.WEB_ROOT ?? null,
+  }));
 
 export type Env = z.output<typeof schema>;
 

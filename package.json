@@ -4,10 +4,11 @@
   "type": "module",
   "workspaces": [
     "apps/app",
-    "apps/runner"
+    "apps/runner",
+    "apps/web"
   ],
   "scripts": {
-    "test": "npm run test -w apps/runner && npm run test -w apps/app",
+    "test": "npm run test -w apps/runner && npm run test -w apps/app && npm run test -w apps/web",
     "hash-password": "npm run hash-password -w apps/app"
   },
   "engines": {
