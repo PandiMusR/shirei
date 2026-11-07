@@ -68,6 +68,16 @@ export async function openRun(
     signal,
   });
   if (response.status === 429) throw new RunnerBusyError();
+  if (response.status === 400) {
+    let code = 'invalid_body';
+    try {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === 'string' && /^[a-z0-9_]+$/.test(body.error)) code = body.error;
+    } catch {
+      code = 'invalid_body';
+    }
+    throw new RunnerRequestError(code);
+  }
   if (!response.ok || !response.body) throw new RunnerRequestError('runner_rejected');
   const lines = iterateRunner(response.body);
   const first = await lines.next();
@@ -81,6 +91,12 @@ export async function stopRun(client: RunnerClient, runId: string): Promise<numb
     headers: { authorization: `Bearer ${client.token}` },
   });
   return response.status;
+}
+
+export async function fetchModels(client: RunnerClient): Promise<unknown> {
+  const response = await fetch(`${client.url}/models`, { headers: { authorization: `Bearer ${client.token}` } });
+  if (!response.ok) throw new RunnerRequestError('runner_rejected');
+  return response.json();
 }
 
 export async function statPath(client: RunnerClient, projectPath: string): Promise<{ exists: boolean; isDirectory: boolean }> {

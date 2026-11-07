@@ -10,7 +10,7 @@ import { endSession, resolveSession, startSession } from './auth/sessions';
 import type { Database } from './db/client';
 import type { Task } from './db/schema';
 import type { Env } from './env';
-import { cloneProject, statPath, type RunnerClient } from './runnerClient';
+import { cloneProject, fetchModels, RunnerRequestError, statPath, type RunnerClient } from './runnerClient';
 import {
   beginShutdown,
   eventsAfter,
@@ -130,6 +130,14 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
     return c.json({ ok: true });
   });
 
+  authed.get('/models', async (c) => {
+    try {
+      return c.json(await fetchModels(runner));
+    } catch {
+      return c.json({ error: 'runner_error' }, 502);
+    }
+  });
+
   authed.get('/projects', async (c) => c.json({ projects: await listProjects(db) }));
 
   authed.post('/projects', async (c) => {
@@ -186,6 +194,7 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
       return c.json({ task: taskJson(task) }, 201);
     } catch (err) {
       if (err instanceof RunnerBusyError) return c.json({ error: 'busy' }, 429);
+      if (err instanceof RunnerRequestError && err.message === 'invalid_model') return c.json({ error: 'invalid_model' }, 400);
       return c.json({ error: 'runner_error' }, 502);
     }
   });

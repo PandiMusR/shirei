@@ -1,3 +1,5 @@
+import type { ModelGroup } from './models';
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -45,6 +47,7 @@ export function explain(error: unknown): string {
   if (error.code === 'exists') return 'That project already exists.';
   if (error.code === 'invalid_path') return 'That folder is outside the workspace.';
   if (error.code === 'force_not_allowed') return 'Force is only for agent mode.';
+  if (error.code === 'invalid_model') return 'That model is not available.';
   if (error.code === 'runner_error') return 'The runner could not start.';
   return 'Something went wrong.';
 }
@@ -72,6 +75,9 @@ export const api = {
   },
   logout() {
     return request<{ ok: true }>('/api/logout', { method: 'POST', body: JSON.stringify({}) });
+  },
+  models() {
+    return request<{ groups: ModelGroup[] }>('/api/models');
   },
   projects() {
     return request<{ projects: Project[] }>('/api/projects');

@@ -162,6 +162,7 @@ export function TaskScreen() {
         <div className="task-meta">
           <StatusChip status={task.status} />
           <span className="quiet">{task.mode}</span>
+          <span className="quiet model-id">{task.model ?? 'auto'}</span>
         </div>
       ) : null}
       <div

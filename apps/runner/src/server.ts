@@ -5,6 +5,8 @@ import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import { z } from 'zod';
 import type { Env } from './env';
+import { createModelCatalog, loadAgentModelList } from './modelCatalog';
+import { buildFamilies, catalogGroups, knownModel, selectFamilies } from './models';
 import { PathGuardError, resolveWorkspacePath } from './pathGuard';
 import { cloneRepo, createRunManager, type RunManager, type RunMode } from './runs';
 
@@ -41,7 +43,7 @@ export function createApp(env: Env, manager: RunManager = createRunManager({
   agentBin: env.AGENT_BIN,
   maxRuns: env.MAX_RUNS,
   timeoutMs: env.RUN_TIMEOUT_MS,
-})) {
+}), catalog = createModelCatalog({ loadText: () => loadAgentModelList(env.AGENT_BIN) })) {
   const app = new Hono();
 
   app.get('/healthz', (c) => c.json({ ok: true }));
@@ -50,6 +52,16 @@ export function createApp(env: Env, manager: RunManager = createRunManager({
     if (c.req.path === '/healthz') return next();
     if (!authorized(c, env.RUNNER_TOKEN)) return c.json({ error: 'unauthorized' }, 401);
     await next();
+  });
+
+  app.get('/models', async (c) => {
+    try {
+      const entries = await catalog.entries();
+      const families = selectFamilies(buildFamilies(entries), env.modelFamilies);
+      return c.json({ groups: catalogGroups(families) });
+    } catch {
+      return c.json({ error: 'runner_error' }, 502);
+    }
   });
 
   app.get('/fs', (c) => {
@@ -94,6 +106,16 @@ export function createApp(env: Env, manager: RunManager = createRunManager({
     const body = parsed.data;
     const mode: RunMode = body.mode;
     if (body.force && mode !== 'agent') return c.json({ error: 'force_not_allowed' }, 400);
+    const model = body.model ?? null;
+    if (model) {
+      let entries: Awaited<ReturnType<typeof catalog.entries>>;
+      try {
+        entries = await catalog.entries();
+      } catch {
+        return c.json({ error: 'runner_error' }, 502);
+      }
+      if (!knownModel(entries, model)) return c.json({ error: 'invalid_model' }, 400);
+    }
 
     let workspaceDir: string;
     try {
