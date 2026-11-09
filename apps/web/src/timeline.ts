@@ -277,6 +277,13 @@ function rawText(type: string, payload: unknown): string {
   return text.length > 240 ? `${text.slice(0, 240)}…` : text;
 }
 
+export function runEndLine(payload: unknown): string | null {
+  if (!isRecord(payload)) return null;
+  if (payload.timedOut === true) return 'Stopped: timed out after 30 min';
+  if (payload.reason === 'runner disconnected') return 'Interrupted: runner disconnected';
+  return null;
+}
+
 function withSeen(state: TimelineState, seq: number, items: TimelineItem[]): TimelineState {
   return { seen: [...state.seen, seq], items };
 }
@@ -285,7 +292,16 @@ export function reduceTimeline(state: TimelineState, event: TimelineEvent): Time
   if (state.seen.includes(event.seq)) return state;
   const payload = event.payload;
 
-  if (event.type === 'system' || event.type === 'runner') return withSeen(state, event.seq, state.items);
+  if (event.type === 'runner') {
+    const line = runEndLine(payload);
+    if (!line) return withSeen(state, event.seq, state.items);
+    return withSeen(state, event.seq, [
+      ...state.items,
+      { kind: 'result', seq: event.seq, text: line, durationMs: null, isError: true },
+    ]);
+  }
+
+  if (event.type === 'system') return withSeen(state, event.seq, state.items);
 
   if (event.type === 'user') {
     const text = textFromMessage(payload);

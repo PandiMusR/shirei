@@ -16,5 +16,14 @@ export function createRateLimiter(opts: { limit: number; windowMs: number; now: 
       current.count += 1;
       return { ok: true };
     },
+    blocked(key: string): RateLimitResult {
+      const nowMs = opts.now();
+      const current = windows.get(key);
+      if (!current || nowMs - current.startedAt >= opts.windowMs) return { ok: true };
+      if (current.count >= opts.limit) {
+        return { ok: false, retryAfterS: Math.max(1, Math.ceil((current.startedAt + opts.windowMs - nowMs) / 1000)) };
+      }
+      return { ok: true };
+    },
   };
 }

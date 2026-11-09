@@ -207,10 +207,17 @@ async function consume(db: Database, taskId: string, lines: AsyncGenerator<Runne
     if (!sawExit && !shuttingDown) {
       const changed = await db
         .update(tasks)
-        .set({ status: 'failed', error: 'stream closed', endedAt: Date.now() })
+        .set({ status: 'interrupted', error: 'runner disconnected', endedAt: Date.now() })
         .where(and(eq(tasks.id, taskId), eq(tasks.status, 'running')))
         .returning({ id: tasks.id });
-      if (changed.length > 0) await notify(taskId);
+      if (changed.length > 0) {
+        await appendEvent(db, taskId, {
+          type: 'runner',
+          subtype: 'interrupted',
+          payload: { reason: 'runner disconnected' },
+        });
+        await notify(taskId);
+      }
     }
   } catch (err) {
     if (shuttingDown) return;

@@ -4,6 +4,13 @@ export const NOTIFY_INSTALL_HELP =
 export const NOTIFY_DENIED_HELP =
   'Notifications are blocked. Install Shirei from Chrome, then open Settings → Apps → Shirei → Notifications → Allow. Set Battery to Unrestricted, and remove Shirei from Sleeping apps and Deep sleeping apps.';
 
+export const NOTIFY_DENIED_HELP_DESKTOP =
+  'Notifications are blocked. Click the lock icon in the address bar → Notifications → Allow.';
+
+export function notifyDeniedHelp(platform: 'android' | 'desktop'): string {
+  return platform === 'android' ? NOTIFY_DENIED_HELP : NOTIFY_DENIED_HELP_DESKTOP;
+}
+
 export const NOTIFY_ON_HELP = 'This phone is notified when a task finishes.';
 
 export function samePath(clientUrl: string, url: string): boolean {

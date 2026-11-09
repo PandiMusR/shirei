@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readyWithin, shouldNotify, urlBase64ToUint8Array } from './pushClient';
+import { notifyDeniedHelp, readyWithin, shouldNotify, urlBase64ToUint8Array } from './pushClient';
 
 const task = 'https://shirei.hakanam.my.id/tasks/abc';
 
@@ -9,6 +9,15 @@ describe('shouldNotify', () => {
     expect(shouldNotify([{ visibilityState: 'visible', url: 'https://shirei.hakanam.my.id/' }], '/tasks/abc', false)).toBe(true);
     expect(shouldNotify([{ visibilityState: 'hidden', url: task }], '/tasks/abc', false)).toBe(true);
     expect(shouldNotify([{ visibilityState: 'visible', url: task }], '/tasks/abc', true)).toBe(true);
+  });
+});
+
+describe('notification help', () => {
+  it('uses Android steps on Android and the lock icon on the desktop', () => {
+    expect(notifyDeniedHelp('android')).toContain('Settings → Apps → Shirei');
+    expect(notifyDeniedHelp('desktop')).toBe(
+      'Notifications are blocked. Click the lock icon in the address bar → Notifications → Allow.',
+    );
   });
 });
 

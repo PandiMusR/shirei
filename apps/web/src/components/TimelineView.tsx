@@ -161,14 +161,15 @@ export function TimelineView({
         }
         if (item.kind === 'tool') return <ToolCard key={`tool-${item.callId}`} item={item} />;
         if (item.kind === 'result') {
-          const showText = item.text.length > 0 && item.text !== assistant;
+          const plain = item.text.startsWith('Stopped:') || item.text.startsWith('Interrupted:');
+          const showText = !plain && item.text.length > 0 && item.text !== assistant;
           return (
             <li key={`result-${item.seq}`} className="result">
               <span className={item.isError || status === 'failed' ? 'result-bad' : 'result-ok'}>
-                {resultLabel(status, item.isError)}
+                {plain ? item.text : resultLabel(status, item.isError)}
               </span>
               {item.durationMs != null ? <span>{formatDuration(item.durationMs)}</span> : null}
-              {error ? <span className="result-note">{error}</span> : null}
+              {!plain && error ? <span className="result-note">{error}</span> : null}
               {showText ? <p className="result-text">{item.text}</p> : null}
               {changed.length > 0 ? (
                 <div className="files-changed">
