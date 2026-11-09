@@ -74,7 +74,7 @@ export type ActiveRun = {
   done: Promise<ExitInfo>;
 };
 
-const KILL_GRACE_MS = 5000;
+export const KILL_GRACE_MS = 10_000;
 
 export function buildAgentArgs(spec: RunSpec): string[] {
   const args = ['-p', '--trust', '--workspace', spec.workspaceDir, '--output-format', 'stream-json', '--stream-partial-output'];

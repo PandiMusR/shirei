@@ -8,6 +8,7 @@ import {
   joinedAssistantText,
   lastLines,
   reduceTimeline,
+  runEndLine,
   shellHasOutput,
   systemInit,
   type TimelineEvent,
@@ -313,5 +314,24 @@ describe('duplicate assistant flushes', () => {
     });
     expect(state.items.filter((item) => item.kind === 'user')).toHaveLength(1);
     expect(state.seen).toEqual([0, 1]);
+  });
+
+  it('says why a run stopped or lost the runner', () => {
+    expect(runEndLine({ timedOut: true, stopped: false })).toBe('Stopped: timed out after 30 min');
+    expect(runEndLine({ reason: 'runner disconnected' })).toBe('Interrupted: runner disconnected');
+    const timedOut = reduceTimeline(emptyTimeline(), {
+      seq: 4,
+      type: 'runner',
+      payload: { code: null, signal: 'SIGTERM', timedOut: true, stopped: false },
+    });
+    const disconnected = reduceTimeline(emptyTimeline(), {
+      seq: 5,
+      type: 'runner',
+      payload: { reason: 'runner disconnected' },
+    });
+    expect(timedOut.items).toEqual([
+      { kind: 'result', seq: 4, text: 'Stopped: timed out after 30 min', durationMs: null, isError: true },
+    ]);
+    expect(disconnected.items[0]).toMatchObject({ text: 'Interrupted: runner disconnected' });
   });
 });

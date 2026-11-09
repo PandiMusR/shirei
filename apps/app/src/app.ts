@@ -1,8 +1,10 @@
 import { getConnInfo } from '@hono/node-server/conninfo';
 import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
+import { loginAddress } from './auth/clientAddress';
 import { clearSessionCookie, readSessionCookie, requireJson, setSessionCookie } from './auth/middleware';
 import { verifyPassword } from './auth/password';
 import { createRateLimiter } from './auth/rateLimit';
@@ -82,13 +84,13 @@ function taskJson(task: Task) {
   };
 }
 
-function clientIp(c: Context): string {
-  const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  if (forwarded) return forwarded;
+const API_BODY_LIMIT = 256 * 1024;
+
+function peerAddress(c: Context): string | null {
   try {
-    return getConnInfo(c).remote.address ?? 'unknown';
+    return getConnInfo(c).remote.address ?? null;
   } catch {
-    return 'unknown';
+    return null;
   }
 }
 
@@ -126,17 +128,31 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
   };
 
   const api = new Hono();
+  api.use(
+    '*',
+    bodyLimit({
+      maxSize: API_BODY_LIMIT,
+      onError: (c) => c.json({ error: 'too_large' }, 413),
+    }),
+  );
   api.use('*', requireJson);
   api.post('/login', async (c) => {
-    const limit = loginLimit.hit(`login:${clientIp(c)}`);
-    if (!limit.ok) {
-      c.header('retry-after', String(limit.retryAfterS));
+    const key = `login:${loginAddress(peerAddress(c), c.req.header('x-real-ip'))}`;
+    const blocked = loginLimit.blocked(key);
+    if (!blocked.ok) {
+      c.header('retry-after', String(blocked.retryAfterS));
       return c.json({ error: 'rate_limited' }, 429);
     }
     const parsed = loginBody.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: 'invalid_body' }, 400);
+    if (!parsed.success) {
+      loginLimit.hit(key);
+      return c.json({ error: 'invalid_body' }, 400);
+    }
     const ok = await verifyPassword(parsed.data.password, env.AUTH_PASSWORD_HASH);
-    if (!ok) return c.json({ error: 'unauthorized' }, 401);
+    if (!ok) {
+      loginLimit.hit(key);
+      return c.json({ error: 'unauthorized' }, 401);
+    }
     const token = await startSession(db, { secret: env.SESSION_SECRET, nowMs: now() });
     setSessionCookie(c, token, env.cookieSecure);
     return c.json({ ok: true });

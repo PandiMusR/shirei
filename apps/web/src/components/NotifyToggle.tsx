@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, explain } from '../api';
-import { NOTIFY_DENIED_HELP, NOTIFY_INSTALL_HELP, NOTIFY_ON_HELP, readyWithin, urlBase64ToUint8Array } from '../pushClient';
+import { NOTIFY_INSTALL_HELP, NOTIFY_ON_HELP, notifyDeniedHelp, readyWithin, urlBase64ToUint8Array } from '../pushClient';
 
 const READY_MS = 2000;
 
@@ -97,7 +97,8 @@ export function NotifyToggle() {
     }
   }
 
-  const help = permission === 'denied' ? NOTIFY_DENIED_HELP : subscribed && ready ? NOTIFY_ON_HELP : NOTIFY_INSTALL_HELP;
+  const platform = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent) ? 'android' : 'desktop';
+  const help = permission === 'denied' ? notifyDeniedHelp(platform) : subscribed && ready ? NOTIFY_ON_HELP : NOTIFY_INSTALL_HELP;
 
   return (
     <section className="notify">
