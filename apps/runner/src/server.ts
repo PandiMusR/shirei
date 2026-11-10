@@ -7,8 +7,9 @@ import { z } from 'zod';
 import type { Env } from './env';
 import { createModelCatalog, loadAgentModelList } from './modelCatalog';
 import { buildFamilies, catalogGroups, knownModel, selectFamilies } from './models';
+import { cloneChecked, gitSummary, parseGitHubRepo, pullFastForward, redactToken, removeWorkspace, validBranch } from './github';
 import { PathGuardError, resolveWorkspacePath } from './pathGuard';
-import { cloneRepo, createRunManager, type RunManager, type RunMode } from './runs';
+import { createRunManager, type RunManager, type RunMode } from './runs';
 
 const runBody = z.object({
   projectPath: z.string().min(1).max(512),
@@ -20,9 +21,34 @@ const runBody = z.object({
 });
 
 const cloneBody = z.object({
-  name: z.string().min(1).max(64),
-  repoUrl: z.string().min(1).max(300),
+  repo: z.string().min(1).max(300),
+  branch: z.string().min(1).max(200).optional(),
 });
+
+const pathBody = z.object({
+  path: z.string().min(1).max(200),
+});
+
+function gitError(err: unknown, token?: string): { status: 400 | 404 | 409; body: { error: string; detail?: string } } {
+  const message = err instanceof Error ? err.message : 'clone_failed';
+  const known = new Set([
+    'exists',
+    'dirty',
+    'missing',
+    'invalid_name',
+    'invalid_repo',
+    'invalid_branch',
+    'invalid_path',
+    'too_large',
+    'timeout',
+    'remote_mismatch',
+    'credential_stored',
+  ]);
+  const error = known.has(message) ? message : 'clone_failed';
+  const status = error === 'exists' || error === 'dirty' ? 409 : error === 'missing' ? 404 : 400;
+  if (error === 'clone_failed') return { status, body: { error, detail: redactToken(message, token).slice(0, 500) } };
+  return { status, body: { error } };
+}
 
 function authorized(c: Context, token: string): boolean {
   const header = c.req.header('authorization') ?? '';
@@ -78,18 +104,60 @@ export function createApp(env: Env, manager: RunManager = createRunManager({
   app.post('/repos', async (c) => {
     const parsed = cloneBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_body' }, 400);
+    const spec = parseGitHubRepo(parsed.data.repo);
+    if (!spec) return c.json({ error: 'invalid_repo' }, 400);
+    if (parsed.data.branch && !validBranch(parsed.data.branch)) return c.json({ error: 'invalid_branch' }, 400);
     try {
-      await cloneRepo({
+      const result = await cloneChecked({
         workspaceRoot: env.WORKSPACE_ROOT,
-        name: parsed.data.name,
-        repoUrl: parsed.data.repoUrl,
+        dirName: spec.dirName,
+        remote: spec.remote,
+        ...(parsed.data.branch ? { branch: parsed.data.branch } : {}),
         ...(env.GITHUB_TOKEN ? { token: env.GITHUB_TOKEN } : {}),
       });
-      return c.json({ ok: true, path: parsed.data.name }, 201);
+      return c.json({ ok: true, path: spec.dirName, remote: spec.remote, output: result.output }, 201);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'clone_failed';
-      const status = message === 'exists' ? 409 : 400;
-      return c.json({ error: message === 'exists' || message.startsWith('invalid') ? message : 'clone_failed' }, status);
+      const failed = gitError(err, env.GITHUB_TOKEN);
+      return c.json(failed.body, failed.status);
+    }
+  });
+
+  app.get('/repos/status', async (c) => {
+    const projectPath = c.req.query('path') ?? '';
+    try {
+      const git = await gitSummary(env.WORKSPACE_ROOT, projectPath);
+      return c.json({ git });
+    } catch (err) {
+      const failed = gitError(err, env.GITHUB_TOKEN);
+      return c.json(failed.body, failed.status);
+    }
+  });
+
+  app.post('/repos/pull', async (c) => {
+    const parsed = pathBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'invalid_body' }, 400);
+    try {
+      const result = await pullFastForward({
+        workspaceRoot: env.WORKSPACE_ROOT,
+        projectPath: parsed.data.path,
+        ...(env.GITHUB_TOKEN ? { token: env.GITHUB_TOKEN } : {}),
+      });
+      return c.json({ ok: true, output: result.output });
+    } catch (err) {
+      const failed = gitError(err, env.GITHUB_TOKEN);
+      return c.json(failed.body, failed.status);
+    }
+  });
+
+  app.post('/repos/remove', async (c) => {
+    const parsed = pathBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'invalid_body' }, 400);
+    try {
+      removeWorkspace(env.WORKSPACE_ROOT, parsed.data.path);
+      return c.json({ ok: true });
+    } catch (err) {
+      const failed = gitError(err, env.GITHUB_TOKEN);
+      return c.json(failed.body, failed.status);
     }
   });
 

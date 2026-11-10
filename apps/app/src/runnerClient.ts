@@ -9,9 +9,12 @@ export class RunnerBusyError extends Error {
 }
 
 export class RunnerRequestError extends Error {
-  constructor(message: string) {
+  readonly detail: string;
+
+  constructor(message: string, detail = '') {
     super(message);
     this.name = 'RunnerRequestError';
+    this.detail = detail;
   }
 }
 
@@ -109,17 +112,77 @@ export async function statPath(client: RunnerClient, projectPath: string): Promi
   return { exists: body.exists === true, isDirectory: body.isDirectory === true };
 }
 
-export async function cloneProject(client: RunnerClient, name: string, repoUrl: string): Promise<void> {
+export type GitSummary = { branch: string; head: string; dirty: boolean };
+
+async function gitFailure(response: Response): Promise<RunnerRequestError> {
+  let error = 'clone_failed';
+  let detail = '';
+  try {
+    const body = (await response.json()) as { error?: unknown; detail?: unknown };
+    if (typeof body.error === 'string' && /^[a-z0-9_]+$/.test(body.error)) error = body.error;
+    if (typeof body.detail === 'string') detail = scrubSecrets(body.detail).slice(0, 500);
+  } catch {
+    error = 'clone_failed';
+  }
+  return new RunnerRequestError(error, detail);
+}
+
+export async function cloneProject(
+  client: RunnerClient,
+  repo: string,
+  branch?: string,
+): Promise<{ path: string; remote: string; output: string }> {
   const response = await fetch(`${client.url}/repos`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${client.token}`,
     },
-    body: JSON.stringify({ name, repoUrl }),
+    body: JSON.stringify(branch ? { repo, branch } : { repo }),
   });
-  if (response.status === 409) throw new RunnerRequestError('exists');
-  if (!response.ok) throw new RunnerRequestError('clone_failed');
+  if (!response.ok) throw await gitFailure(response);
+  const body = (await response.json()) as { path?: unknown; remote?: unknown; output?: unknown };
+  if (typeof body.path !== 'string' || typeof body.remote !== 'string') throw new RunnerRequestError('clone_failed');
+  return { path: body.path, remote: body.remote, output: typeof body.output === 'string' ? scrubSecrets(body.output).slice(0, 500) : '' };
+}
+
+export async function repoStatus(client: RunnerClient, projectPath: string): Promise<GitSummary | null> {
+  const url = new URL('/repos/status', client.url);
+  url.searchParams.set('path', projectPath);
+  const response = await fetch(url, { headers: { authorization: `Bearer ${client.token}` } });
+  if (!response.ok) return null;
+  const body = (await response.json()) as { git?: unknown };
+  const git = body.git;
+  if (!git || typeof git !== 'object') return null;
+  const row = git as { branch?: unknown; head?: unknown; dirty?: unknown };
+  if (typeof row.branch !== 'string' || typeof row.head !== 'string' || typeof row.dirty !== 'boolean') return null;
+  return { branch: row.branch, head: row.head, dirty: row.dirty };
+}
+
+export async function pullProject(client: RunnerClient, projectPath: string): Promise<{ output: string }> {
+  const response = await fetch(`${client.url}/repos/pull`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${client.token}`,
+    },
+    body: JSON.stringify({ path: projectPath }),
+  });
+  if (!response.ok) throw await gitFailure(response);
+  const body = (await response.json()) as { output?: unknown };
+  return { output: typeof body.output === 'string' ? scrubSecrets(body.output).slice(0, 500) : '' };
+}
+
+export async function removeWorkspace(client: RunnerClient, projectPath: string): Promise<void> {
+  const response = await fetch(`${client.url}/repos/remove`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${client.token}`,
+    },
+    body: JSON.stringify({ path: projectPath }),
+  });
+  if (!response.ok) throw await gitFailure(response);
 }
 
 export function publicError(err: unknown): string {

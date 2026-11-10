@@ -1,8 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { agentEnv } from './github';
 import { scrubSecrets } from './scrub';
 
 export type RunMode = 'agent' | 'ask' | 'plan';
@@ -97,7 +95,7 @@ export function createRunManager(opts: { agentBin: string; maxRuns: number; time
     const lines = createLineQueue();
     const child = spawn(opts.agentBin, buildAgentArgs(spec), {
       cwd: spec.workspaceDir,
-      env: process.env,
+      env: agentEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     if (!child.stdout || !child.stderr) {
@@ -189,66 +187,3 @@ export function createRunManager(opts: { agentBin: string; maxRuns: number; time
 }
 
 export type RunManager = ReturnType<typeof createRunManager>;
-
-const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const REPO_RE = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/;
-
-export function validateClone(name: string, repoUrl: string): { name: string; repoUrl: string } {
-  if (!NAME_RE.test(name) || name === '.' || name === '..') throw new Error('invalid_name');
-  const match = REPO_RE.exec(repoUrl);
-  const owner = match?.[1];
-  const repo = match?.[2];
-  if (!owner || !repo || owner.includes('..') || repo.includes('..')) throw new Error('invalid_repo');
-  return { name, repoUrl };
-}
-
-export async function cloneRepo(opts: {
-  workspaceRoot: string;
-  name: string;
-  repoUrl: string;
-  token?: string;
-}): Promise<void> {
-  const { name, repoUrl } = validateClone(opts.name, opts.repoUrl);
-  const root = realpathSync(opts.workspaceRoot);
-  const dest = path.resolve(root, name);
-  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  if (!dest.startsWith(prefix)) throw new Error('invalid_name');
-  if (existsSync(dest)) throw new Error('exists');
-
-  let askpass: string | undefined;
-  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-  if (opts.token) {
-    askpass = path.join(tmpdir(), `shirei-askpass-${process.pid}-${randomUUID()}`);
-    writeFileSync(
-      askpass,
-      '#!/bin/sh\ncase "$1" in\n*Username*) printf "%s\\n" "x-access-token" ;;\n*) printf "%s\\n" "$SHIREI_GIT_TOKEN" ;;\nesac\n',
-      { mode: 0o700 },
-    );
-    env.GIT_ASKPASS = askpass;
-    env.SHIREI_GIT_TOKEN = opts.token;
-  }
-
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn('git', ['clone', '--depth', '1', repoUrl, dest], {
-        env,
-        stdio: ['ignore', 'ignore', 'pipe'],
-      });
-      let stderr = '';
-      child.stderr?.setEncoding('utf8');
-      child.stderr?.on('data', (chunk: string) => {
-        if (stderr.length < 4000) stderr += chunk;
-      });
-      child.once('error', reject);
-      child.once('exit', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(scrubSecrets(stderr.trim()).slice(0, 500) || `git exit ${code ?? 'null'}`));
-      });
-    });
-  } catch (err) {
-    rmSync(dest, { recursive: true, force: true });
-    throw err;
-  } finally {
-    if (askpass) rmSync(askpass, { force: true });
-  }
-}

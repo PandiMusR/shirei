@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
 import type { Database } from './db/client';
 import { events, projects, tasks, type EventRow, type Project, type Task } from './db/schema';
@@ -61,7 +61,7 @@ export function beginShutdown(): void {
 }
 
 export async function listProjects(db: Database): Promise<Project[]> {
-  return db.select().from(projects).orderBy(desc(projects.createdAt));
+  return db.select().from(projects).where(isNull(projects.removedAt)).orderBy(desc(projects.createdAt));
 }
 
 export async function getProject(db: Database, id: string): Promise<Project | undefined> {
@@ -79,10 +79,43 @@ export async function insertProject(
     path: input.path,
     source: input.source,
     repoUrl: input.repoUrl,
+    removedAt: null,
     createdAt: Date.now(),
   };
   await db.insert(projects).values(row);
   return row;
+}
+
+export function isUniqueError(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
+    if (current.message.includes('UNIQUE')) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+export async function saveGitProject(
+  db: Database,
+  input: { name: string; path: string; repoUrl: string },
+): Promise<Project> {
+  try {
+    return await insertProject(db, { ...input, source: 'git' });
+  } catch (err) {
+    if (!isUniqueError(err)) throw err;
+    const existing = await db.select().from(projects).where(eq(projects.path, input.path)).limit(1);
+    const row = existing[0];
+    if (!row?.removedAt) throw err;
+    await db
+      .update(projects)
+      .set({ removedAt: null, name: input.name, repoUrl: input.repoUrl, source: 'git' })
+      .where(eq(projects.id, row.id));
+    return { ...row, removedAt: null, name: input.name, repoUrl: input.repoUrl, source: 'git' };
+  }
+}
+
+export async function markProjectRemoved(db: Database, id: string): Promise<void> {
+  await db.update(projects).set({ removedAt: Date.now() }).where(eq(projects.id, id));
 }
 
 export async function listTasks(db: Database): Promise<Task[]> {

@@ -12,6 +12,7 @@ export const projects = sqliteTable('projects', {
   path: text('path').notNull().unique(),
   source: text('source').notNull(),
   repoUrl: text('repo_url'),
+  removedAt: integer('removed_at'),
   createdAt: integer('created_at').notNull(),
 });
 

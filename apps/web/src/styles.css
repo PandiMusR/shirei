@@ -186,7 +186,9 @@ input, textarea, select {
 
 textarea { resize: none; min-height: 120px; max-height: 40vh; line-height: 1.45; }
 
-.form-error { color: var(--bad); margin: 0; }
+.form-error { color: var(--bad); margin: 0; white-space: pre-wrap; }
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.git-meta { margin: 4px 0 0; }
 
 .scroll {
   flex: 1;
