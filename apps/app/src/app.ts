@@ -12,8 +12,19 @@ import { endSession, resolveSession, startSession } from './auth/sessions';
 import type { Database } from './db/client';
 import type { Task } from './db/schema';
 import type { Env } from './env';
+import { parseGitHubRepo, validBranch } from './github';
 import { buildTestPush, createWebPushSender, deleteSubscription, deliverPush, notifyTask, saveSubscription } from './push';
-import { cloneProject, fetchModels, RunnerRequestError, statPath, type RunnerClient } from './runnerClient';
+import {
+  cloneProject,
+  fetchModels,
+  pullProject,
+  removeWorkspace,
+  repoStatus,
+  RunnerRequestError,
+  statPath,
+  type GitSummary,
+  type RunnerClient,
+} from './runnerClient';
 import {
   beginShutdown,
   eventsAfter,
@@ -23,8 +34,11 @@ import {
   listProjects,
   listTasks,
   markInterrupted,
+  isUniqueError,
+  markProjectRemoved,
   requestStop,
   RunnerBusyError,
+  saveGitProject,
   sessionTurns,
   setTaskFinishedHook,
   startTask,
@@ -33,12 +47,18 @@ import {
 import { mountWeb } from './web';
 
 const loginBody = z.object({ password: z.string().min(1).max(256) });
-const projectBody = z.object({
-  name: z.string().min(1).max(80),
-  source: z.enum(['folder', 'git']),
-  path: z.string().min(1).max(512).optional(),
-  repoUrl: z.string().min(1).max(300).optional(),
-});
+const projectBody = z.discriminatedUnion('source', [
+  z.object({
+    source: z.literal('folder'),
+    name: z.string().min(1).max(80),
+    path: z.string().min(1).max(512),
+  }),
+  z.object({
+    source: z.literal('git'),
+    repo: z.string().min(1).max(300),
+    branch: z.string().min(1).max(200).optional(),
+  }),
+]);
 const taskBody = z.object({
   projectId: z.string().min(1),
   prompt: z.string().min(1).max(20_000),
@@ -57,6 +77,27 @@ const subscribeBody = z.object({
   }),
 });
 const endpointBody = z.object({ endpoint: z.string().url().max(2000) });
+
+function projectJson(project: { id: string; name: string; path: string; source: string; repoUrl: string | null; createdAt: number }, git: GitSummary | null) {
+  return {
+    id: project.id,
+    name: project.name,
+    path: project.path,
+    source: project.source,
+    repoUrl: project.repoUrl,
+    createdAt: project.createdAt,
+    git,
+  };
+}
+
+function gitHttp(err: unknown): { status: 400 | 404 | 409 | 502; body: { error: string; detail?: string } } {
+  if (err instanceof RunnerRequestError) {
+    const status = err.message === 'exists' || err.message === 'dirty' ? 409 : err.message === 'missing' ? 404 : 400;
+    return { status, body: err.detail ? { error: err.message, detail: err.detail } : { error: err.message } };
+  }
+  if (isUniqueError(err)) return { status: 409, body: { error: 'exists' } };
+  return { status: 502, body: { error: 'runner_error' } };
+}
 
 function parsePayload(raw: string): unknown {
   try {
@@ -175,7 +216,20 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
     }
   });
 
-  authed.get('/projects', async (c) => c.json({ projects: await listProjects(db) }));
+  authed.get('/projects', async (c) => {
+    const rows = await listProjects(db);
+    const listed = await Promise.all(
+      rows.map(async (project) => {
+        if (project.source !== 'git') return projectJson(project, null);
+        try {
+          return projectJson(project, await repoStatus(runner, project.path));
+        } catch {
+          return projectJson(project, null);
+        }
+      }),
+    );
+    return c.json({ projects: listed });
+  });
 
   authed.post('/projects', async (c) => {
     const parsed = projectBody.safeParse(await c.req.json().catch(() => null));
@@ -183,22 +237,55 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
     const body = parsed.data;
     try {
       if (body.source === 'folder') {
-        if (!body.path || !RELATIVE_PATH.test(body.path)) return c.json({ error: 'invalid_path' }, 400);
+        if (!RELATIVE_PATH.test(body.path)) return c.json({ error: 'invalid_path' }, 400);
         const stat = await statPath(runner, body.path);
         if (!stat.exists || !stat.isDirectory) return c.json({ error: 'not_found' }, 404);
         const project = await insertProject(db, { name: body.name, path: body.path, source: 'folder', repoUrl: null });
-        return c.json({ project }, 201);
+        return c.json({ project: projectJson(project, null) }, 201);
       }
-      if (!body.repoUrl || !RELATIVE_PATH.test(body.name)) return c.json({ error: 'invalid_body' }, 400);
-      await cloneProject(runner, body.name, body.repoUrl);
-      const project = await insertProject(db, { name: body.name, path: body.name, source: 'git', repoUrl: body.repoUrl });
-      return c.json({ project }, 201);
+      const spec = parseGitHubRepo(body.repo);
+      if (!spec) return c.json({ error: 'invalid_repo' }, 400);
+      if (body.branch && !validBranch(body.branch)) return c.json({ error: 'invalid_branch' }, 400);
+      const cloned = await cloneProject(runner, body.repo, body.branch);
+      const project = await saveGitProject(db, {
+        name: `${spec.owner}/${spec.repo}`,
+        path: cloned.path,
+        repoUrl: cloned.remote,
+      });
+      return c.json({ project: projectJson(project, null), output: cloned.output }, 201);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'runner_error';
-      if (message === 'exists' || message.includes('UNIQUE')) return c.json({ error: 'exists' }, 409);
-      if (message === 'invalid_path') return c.json({ error: 'invalid_path' }, 400);
-      return c.json({ error: 'runner_error' }, 502);
+      const failed = gitHttp(err);
+      return c.json(failed.body, failed.status);
     }
+  });
+
+  authed.post('/projects/:id/pull', async (c) => {
+    const project = await getProject(db, c.req.param('id'));
+    if (!project || project.removedAt) return c.json({ error: 'not_found' }, 404);
+    if (project.source !== 'git') return c.json({ error: 'invalid_body' }, 400);
+    try {
+      const result = await pullProject(runner, project.path);
+      return c.json({ ok: true, output: result.output });
+    } catch (err) {
+      const failed = gitHttp(err);
+      return c.json(failed.body, failed.status);
+    }
+  });
+
+  authed.post('/projects/:id/remove', async (c) => {
+    const project = await getProject(db, c.req.param('id'));
+    if (!project || project.removedAt) return c.json({ error: 'not_found' }, 404);
+    if (project.source !== 'git') return c.json({ error: 'invalid_body' }, 400);
+    try {
+      await removeWorkspace(runner, project.path);
+    } catch (err) {
+      if (!(err instanceof RunnerRequestError) || err.message !== 'missing') {
+        const failed = gitHttp(err);
+        return c.json(failed.body, failed.status);
+      }
+    }
+    await markProjectRemoved(db, project.id);
+    return c.json({ ok: true });
   });
 
   authed.get('/tasks', async (c) => {
@@ -212,7 +299,7 @@ export function createApp(opts: { env: Env; db: Database; now?: () => number }) 
     const body = parsed.data;
     if (body.force && body.mode !== 'agent') return c.json({ error: 'force_not_allowed' }, 400);
     const project = await getProject(db, body.projectId);
-    if (!project) return c.json({ error: 'not_found' }, 404);
+    if (!project || project.removedAt) return c.json({ error: 'not_found' }, 404);
     let resumeId: string | null = null;
     if (body.resumeTaskId) {
       const previous = await getTask(db, body.resumeTaskId);

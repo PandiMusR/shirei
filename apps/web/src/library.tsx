@@ -95,9 +95,12 @@ export function ProjectLists({ variant }: { variant: 'page' | 'rail' }) {
   const [source, setSource] = useState<'folder' | 'git'>('folder');
   const [name, setName] = useState('');
   const [path, setPath] = useState('');
-  const [repoUrl, setRepoUrl] = useState('');
+  const [repo, setRepo] = useState('');
+  const [branch, setBranch] = useState('');
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState('');
+  const [actionNote, setActionNote] = useState<{ id: string; text: string } | null>(null);
   const idPrefix = variant === 'rail' ? 'rail-' : '';
 
   function lastTask(projectId: string): Task | undefined {
@@ -119,17 +122,51 @@ export function ProjectLists({ variant }: { variant: 'page' | 'rail' }) {
       if (source === 'folder') {
         await api.createProject({ name: name.trim(), source: 'folder', path: path.trim() });
       } else {
-        await api.createProject({ name: name.trim(), source: 'git', repoUrl: repoUrl.trim() });
+        const trimmedBranch = branch.trim();
+        await api.createProject({
+          source: 'git',
+          repo: repo.trim(),
+          ...(trimmedBranch ? { branch: trimmedBranch } : {}),
+        });
       }
       setSheet(false);
       setName('');
       setPath('');
-      setRepoUrl('');
+      setRepo('');
+      setBranch('');
       await reload();
     } catch (err) {
       setFormError(explain(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function pull(project: Project) {
+    setBusyId(project.id);
+    setActionNote(null);
+    try {
+      const result = await api.pullProject(project.id);
+      setActionNote({ id: project.id, text: result.output || 'Already up to date.' });
+      await reload();
+    } catch (err) {
+      setActionNote({ id: project.id, text: explain(err) });
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  async function remove(project: Project) {
+    if (!window.confirm(`Remove ${project.name}? The files will be deleted. Task history stays.`)) return;
+    setBusyId(project.id);
+    setActionNote(null);
+    try {
+      await api.removeProject(project.id);
+      await reload();
+    } catch (err) {
+      setActionNote({ id: project.id, text: explain(err) });
+    } finally {
+      setBusyId('');
     }
   }
 
@@ -158,6 +195,22 @@ export function ProjectLists({ variant }: { variant: 'page' | 'rail' }) {
                 <p className="quiet">
                   <span className="badge">{project.source}</span> {project.path}
                 </p>
+                {project.git ? (
+                  <p className="quiet git-meta">
+                    {project.git.branch} · {project.git.head} · {project.git.dirty ? 'dirty' : 'clean'}
+                  </p>
+                ) : null}
+                {project.source === 'git' ? (
+                  <div className="row-actions">
+                    <button type="button" className="text-btn" disabled={busyId === project.id} onClick={() => void pull(project)}>
+                      Pull latest
+                    </button>
+                    <button type="button" className="text-btn" disabled={busyId === project.id} onClick={() => void remove(project)}>
+                      Remove project
+                    </button>
+                  </div>
+                ) : null}
+                {actionNote?.id === project.id ? <p className="quiet git-meta">{actionNote.text}</p> : null}
                 {last ? (
                   <p className="quiet last-line">
                     last: {statusLabel(last.status)} · {formatAgo(last.endedAt ?? last.startedAt ?? last.createdAt)}
@@ -213,10 +266,10 @@ export function ProjectLists({ variant }: { variant: 'page' | 'rail' }) {
             GitHub
           </button>
         </div>
-        <label htmlFor={`${idPrefix}project-name`}>Name</label>
-        <input id={`${idPrefix}project-name`} value={name} onChange={(event) => setName(event.target.value)} required />
         {source === 'folder' ? (
           <>
+            <label htmlFor={`${idPrefix}project-name`}>Name</label>
+            <input id={`${idPrefix}project-name`} value={name} onChange={(event) => setName(event.target.value)} required />
             <label htmlFor={`${idPrefix}project-path`}>Folder path</label>
             <input
               id={`${idPrefix}project-path`}
@@ -228,19 +281,26 @@ export function ProjectLists({ variant }: { variant: 'page' | 'rail' }) {
           </>
         ) : (
           <>
-            <label htmlFor={`${idPrefix}project-url`}>GitHub URL</label>
+            <label htmlFor={`${idPrefix}project-repo`}>Repository</label>
             <input
-              id={`${idPrefix}project-url`}
-              value={repoUrl}
-              placeholder="https://github.com/owner/repo"
-              onChange={(event) => setRepoUrl(event.target.value)}
+              id={`${idPrefix}project-repo`}
+              value={repo}
+              placeholder="owner/repo"
+              onChange={(event) => setRepo(event.target.value)}
               required
+            />
+            <label htmlFor={`${idPrefix}project-branch`}>Branch (optional)</label>
+            <input
+              id={`${idPrefix}project-branch`}
+              value={branch}
+              placeholder="main"
+              onChange={(event) => setBranch(event.target.value)}
             />
           </>
         )}
         {formError ? <p className="form-error">{formError}</p> : null}
         <button type="submit" className="primary" disabled={saving}>
-          {saving ? 'Adding…' : 'Add project'}
+          {saving ? (source === 'git' ? 'Cloning…' : 'Adding…') : 'Add project'}
         </button>
       </form>
     </Sheet>
