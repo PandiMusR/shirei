@@ -66,6 +66,25 @@ export function agentEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
   return env;
 }
 
+/** Cleared first so a system helper is not used. The `$GITHUB_TOKEN` is expanded by git's shell, not stored in argv. */
+export const GIT_CREDENTIAL_HELPER =
+  'credential.helper=!f(){ echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f';
+
+export function gitAuthPrefix(token?: string): string[] {
+  const prefix = ['-c', 'credential.helper='];
+  if (token) prefix.push('-c', GIT_CREDENTIAL_HELPER);
+  return prefix;
+}
+
+export function gitChildEnv(token?: string): NodeJS.ProcessEnv {
+  const env = agentEnv();
+  env.GIT_TERMINAL_PROMPT = '0';
+  delete env.GIT_ASKPASS;
+  delete env.SHIREI_GIT_TOKEN;
+  if (token) env.GITHUB_TOKEN = token;
+  return env;
+}
+
 type GitResult = { code: number | null; stdout: string; stderr: string; reason: 'timeout' | 'too_large' | null };
 
 function directoryBytes(root: string): number {
@@ -172,36 +191,15 @@ function assertInside(dest: string): void {
   if (path.dirname(real) !== root) throw new Error('invalid_path');
 }
 
-async function withAskpass<T>(token: string | undefined, run: (env: NodeJS.ProcessEnv) => Promise<T>): Promise<T> {
-  const env = agentEnv();
-  env.GIT_TERMINAL_PROMPT = '0';
-  let askpass: string | undefined;
-  if (token) {
-    askpass = path.join(tmpdir(), `shirei-askpass-${process.pid}-${randomUUID()}`);
-    writeFileSync(
-      askpass,
-      '#!/bin/sh\ncase "$1" in\n*Username*) printf "%s\\n" "x-access-token" ;;\n*) printf "%s\\n" "$SHIREI_GIT_TOKEN" ;;\nesac\n',
-      { mode: 0o700 },
-    );
-    env.GIT_ASKPASS = askpass;
-    env.SHIREI_GIT_TOKEN = token;
-  }
-  try {
-    return await run(env);
-  } finally {
-    if (askpass) rmSync(askpass, { force: true });
-  }
-}
-
 function gitEnv(base: NodeJS.ProcessEnv, emptyConfig: string): NodeJS.ProcessEnv {
   return { ...base, GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_SYSTEM: emptyConfig, GIT_TERMINAL_PROMPT: '0' };
 }
 
-async function assertRemote(dest: string, remote: string, token: string | undefined, env: NodeJS.ProcessEnv): Promise<void> {
+async function assertRemote(dest: string, remote: string, token: string | undefined): Promise<void> {
   const empty = path.join(tmpdir(), `shirei-gitconfig-${process.pid}-${randomUUID()}`);
   writeFileSync(empty, '');
   try {
-    const isolated = gitEnv(env, empty);
+    const isolated = gitEnv(gitChildEnv(), empty);
     const url = await runGit(['config', '--get', 'remote.origin.url'], { cwd: dest, env: isolated, timeoutMs: 30_000 });
     if (url.code !== 0 || url.stdout.trim() !== remote) throw new Error('remote_mismatch');
     const cred = await runGit(['config', '--get-regexp', 'credential|helper'], { cwd: dest, env: isolated, timeoutMs: 30_000 });
@@ -236,7 +234,7 @@ export async function cloneChecked(opts: {
   }
   const timeoutMs = opts.timeoutMs ?? CLONE_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? CLONE_MAX_BYTES;
-  const args = ['-c', 'credential.helper=', 'clone', '--depth', '50', '--single-branch'];
+  const args = [...gitAuthPrefix(opts.token), 'clone', '--depth', '50', '--single-branch'];
   if (opts.branch) {
     if (!validBranch(opts.branch)) throw new Error('invalid_branch');
     args.push('--branch', opts.branch);
@@ -244,23 +242,27 @@ export async function cloneChecked(opts: {
   args.push(opts.fetchUrl ?? opts.remote, dest);
   let output = '';
   try {
-    const result = await withAskpass(opts.token, (env) =>
-      runGit(args, { env, timeoutMs, dest, maxBytes, pollMs: opts.pollMs }),
-    );
+    const result = await runGit(args, {
+      env: gitChildEnv(opts.token),
+      timeoutMs,
+      dest,
+      maxBytes,
+      pollMs: opts.pollMs,
+    });
     output = redactToken(`${result.stderr}\n${result.stdout}`, opts.token).trim();
     if (result.reason === 'timeout') throw new Error('timeout');
     if (result.reason === 'too_large' || directoryBytes(dest) > maxBytes) throw new Error('too_large');
     if (result.code !== 0) throw new Error(output || 'clone_failed');
-    const configured = await withAskpass(undefined, (env) =>
-      runGit(['-c', 'credential.helper=', 'remote', 'set-url', 'origin', opts.remote], { cwd: dest, env, timeoutMs: 30_000 }),
-    );
-    if (configured.code !== 0) throw new Error('remote_mismatch');
-    await withAskpass(undefined, async (env) => {
-      const name = await runGit(['config', 'user.name', GIT_NAME], { cwd: dest, env, timeoutMs: 30_000 });
-      const email = await runGit(['config', 'user.email', GIT_EMAIL], { cwd: dest, env, timeoutMs: 30_000 });
-      if (name.code !== 0 || email.code !== 0) throw new Error('clone_failed');
+    const configured = await runGit([...gitAuthPrefix(), 'remote', 'set-url', 'origin', opts.remote], {
+      cwd: dest,
+      env: gitChildEnv(),
+      timeoutMs: 30_000,
     });
-    await withAskpass(undefined, (env) => assertRemote(dest, opts.remote, opts.token, env));
+    if (configured.code !== 0) throw new Error('remote_mismatch');
+    const name = await runGit(['config', 'user.name', GIT_NAME], { cwd: dest, env: gitChildEnv(), timeoutMs: 30_000 });
+    const email = await runGit(['config', 'user.email', GIT_EMAIL], { cwd: dest, env: gitChildEnv(), timeoutMs: 30_000 });
+    if (name.code !== 0 || email.code !== 0) throw new Error('clone_failed');
+    await assertRemote(dest, opts.remote, opts.token);
     return { output };
   } catch (err) {
     rmSync(dest, { recursive: true, force: true });
@@ -274,17 +276,11 @@ export async function gitSummary(
 ): Promise<{ branch: string; head: string; dirty: boolean } | null> {
   const dest = workspaceDest(workspaceRoot, projectPath);
   assertInside(dest);
-  const branch = await withAskpass(undefined, (env) =>
-    runGit(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dest, env, timeoutMs: 30_000 }),
-  );
+  const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dest, env: gitChildEnv(), timeoutMs: 30_000 });
   if (branch.code !== 0) return null;
-  const head = await withAskpass(undefined, (env) =>
-    runGit(['rev-parse', '--short=7', 'HEAD'], { cwd: dest, env, timeoutMs: 30_000 }),
-  );
+  const head = await runGit(['rev-parse', '--short=7', 'HEAD'], { cwd: dest, env: gitChildEnv(), timeoutMs: 30_000 });
   if (head.code !== 0) return null;
-  const porcelain = await withAskpass(undefined, (env) =>
-    runGit(['status', '--porcelain'], { cwd: dest, env, timeoutMs: 30_000 }),
-  );
+  const porcelain = await runGit(['status', '--porcelain'], { cwd: dest, env: gitChildEnv(), timeoutMs: 30_000 });
   if (porcelain.code !== 0) return null;
   return { branch: branch.stdout.trim(), head: head.stdout.trim(), dirty: porcelain.stdout.trim().length > 0 };
 }
@@ -297,18 +293,14 @@ export async function pullFastForward(opts: {
 }): Promise<{ output: string }> {
   const dest = workspaceDest(opts.workspaceRoot, opts.projectPath);
   assertInside(dest);
-  const status = await withAskpass(undefined, (env) =>
-    runGit(['status', '--porcelain'], { cwd: dest, env, timeoutMs: 30_000 }),
-  );
+  const status = await runGit(['status', '--porcelain'], { cwd: dest, env: gitChildEnv(), timeoutMs: 30_000 });
   if (status.code !== 0) throw new Error(redactToken(status.stderr, opts.token).trim() || 'pull_failed');
   if (status.stdout.trim()) throw new Error('dirty');
-  const result = await withAskpass(opts.token, (env) =>
-    runGit(['-c', 'credential.helper=', 'pull', '--ff-only'], {
-      cwd: dest,
-      env,
-      timeoutMs: opts.timeoutMs ?? CLONE_TIMEOUT_MS,
-    }),
-  );
+  const result = await runGit([...gitAuthPrefix(opts.token), 'pull', '--ff-only'], {
+    cwd: dest,
+    env: gitChildEnv(opts.token),
+    timeoutMs: opts.timeoutMs ?? CLONE_TIMEOUT_MS,
+  });
   const output = redactToken(`${result.stderr}\n${result.stdout}`, opts.token).trim();
   if (result.reason === 'timeout') throw new Error('timeout');
   if (result.code !== 0) throw new Error(output || 'pull_failed');

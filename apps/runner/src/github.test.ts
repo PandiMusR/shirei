@@ -4,7 +4,20 @@ import { createServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { agentEnv, cloneChecked, GIT_EMAIL, GIT_NAME, parseGitHubRepo, pullFastForward, redactToken, removeWorkspace, validBranch } from './github';
+import {
+  agentEnv,
+  cloneChecked,
+  GIT_CREDENTIAL_HELPER,
+  GIT_EMAIL,
+  GIT_NAME,
+  gitAuthPrefix,
+  gitChildEnv,
+  parseGitHubRepo,
+  pullFastForward,
+  redactToken,
+  removeWorkspace,
+  validBranch,
+} from './github';
 
 const TOKEN = 'ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const REMOTE = 'https://github.com/octocat/Hello-World.git';
@@ -99,6 +112,45 @@ describe('agentEnv', () => {
     expect(env.GIT_COMMITTER_NAME).toBe(GIT_NAME);
     expect(env.GIT_COMMITTER_EMAIL).toBe(GIT_EMAIL);
     expect(env.PATH).toBe('/usr/bin');
+  });
+});
+
+describe('git auth', () => {
+  it('puts the credential helper on clone and pull without the token text', () => {
+    const pat = 'github_pat_AAAAAAAAAAAAAAAAAAAA';
+    const prefix = gitAuthPrefix(pat);
+    expect(prefix).toEqual(['-c', 'credential.helper=', '-c', GIT_CREDENTIAL_HELPER]);
+    expect(prefix.join(' ')).toContain('password=$GITHUB_TOKEN');
+    expect(prefix.join(' ')).not.toContain(pat);
+    expect(gitAuthPrefix().join(' ')).not.toContain('password=');
+    const env = gitChildEnv(pat);
+    expect(env.GITHUB_TOKEN).toBe(pat);
+    expect(env.GIT_TERMINAL_PROMPT).toBe('0');
+    expect(env.GIT_ASKPASS).toBeUndefined();
+    expect(env.SHIREI_GIT_TOKEN).toBeUndefined();
+    expect(gitChildEnv().GITHUB_TOKEN).toBeUndefined();
+    expect(agentEnv(env).GITHUB_TOKEN).toBeUndefined();
+  });
+
+  it('omits the token from a failed clone error', async () => {
+    const workspace = tempDir();
+    const pat = 'github_pat_AAAAAAAAAAAAAAAAAAAA';
+    let message = '';
+    try {
+      await cloneChecked({
+        workspaceRoot: workspace,
+        dirName: 'octocat-Hello-World',
+        remote: REMOTE,
+        fetchUrl: path.join(workspace, 'missing-repo'),
+        token: pat,
+      });
+    } catch (err) {
+      message = err instanceof Error ? err.message : '';
+    }
+    expect(message.length).toBeGreaterThan(0);
+    expect(message).not.toContain(pat);
+    expect(message).not.toContain('github_pat_');
+    expect(message).not.toContain('GIT_ASKPASS');
   });
 });
 
